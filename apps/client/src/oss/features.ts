@@ -1,0 +1,16 @@
+export enum Feature {
+  AI = "ai",
+  API_KEYS = "api_keys",
+  ATTACHMENT_INDEXING = "attachment_indexing",
+  AUDIT_LOGS = "audit_logs",
+  BASES = "bases",
+  COMMENT_RESOLUTION = "comment_resolution",
+  CONFLUENCE_IMPORT = "confluence_import",
+  DOCX_EXPORT = "docx_export",
+  DOCX_IMPORT = "docx_import",
+  PAGE_VERIFICATION = "page_verification",
+  PDF_IMPORT = "pdf_import",
+  PERSONAL_SPACES = "personal_spaces",
+  SECURITY_SETTINGS = "security_settings",
+  TEMPLATES = "templates",
+}
