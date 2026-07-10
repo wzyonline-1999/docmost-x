@@ -9,10 +9,10 @@ on:
       image_tag:
         description: Local image tag stored in the artifact
         required: true
-        default: 0.1.0-rc.4
+        default: 0.1.0-rc.5
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   IMAGE_TAG: ${{ inputs.image_tag || github.ref_name }}
@@ -56,3 +56,13 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 7
+
+      - name: Publish prerelease image archive
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          generate_release_notes: false
+          files: |
+            /tmp/docmost-x-amd64.tar.gz
+            /tmp/docmost-x-amd64.tar.gz.sha256
