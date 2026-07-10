@@ -1,0 +1,40 @@
+.toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--mantine-spacing-sm);
+  flex-wrap: wrap;
+  margin-block: var(--mantine-spacing-md);
+}
+
+.filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: var(--mantine-spacing-sm);
+  margin-block: var(--mantine-spacing-md);
+}
+
+.tokenValue {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.jsonValue {
+  max-height: 50vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.breakValue {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 48em) {
+  .filters {
+    grid-template-columns: 1fr;
+  }
+}

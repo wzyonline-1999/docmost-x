@@ -81,14 +81,15 @@ export class CollaborationHandler {
           prosemirrorJson: any;
           operation: string;
           user: User;
+          strictPersistence?: boolean;
         },
       ) => {
-        const { prosemirrorJson, operation, user } = payload;
+        const { prosemirrorJson, operation, user, strictPersistence } = payload;
         this.logger.debug('Updating page content via yjs', documentName);
         await this.withYdocConnection(
           hocuspocus,
           documentName,
-          { user },
+          { user, strictPersistence },
           (doc) => {
             const fragment = doc.getXmlFragment('default');
 

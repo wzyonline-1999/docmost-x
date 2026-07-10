@@ -278,6 +278,150 @@ export class EnvironmentService {
       .toLowerCase();
   }
 
+  isMcpEnabled(): boolean {
+    return (
+      this.configService.get<string>('MCP_ENABLED', 'false').toLowerCase() ===
+      'true'
+    );
+  }
+
+  getMcpPublicBaseUrl(): string {
+    return this.configService.get<string>('MCP_PUBLIC_BASE_URL');
+  }
+
+  getMcpTokenHashSecret(): string {
+    return this.configService.get<string>('MCP_TOKEN_HASH_SECRET');
+  }
+
+  getMcpMaxQueryLength(): number {
+    return parseInt(
+      this.configService.get<string>('MCP_MAX_QUERY_LENGTH', '1000'),
+      10,
+    );
+  }
+
+  getMcpMaxWriteContentLength(): number {
+    return parseInt(
+      this.configService.get<string>('MCP_MAX_WRITE_CONTENT_LENGTH', '200000'),
+      10,
+    );
+  }
+
+  getMcpReadAuditSampleRate(): number {
+    return parseFloat(
+      this.configService.get<string>('MCP_READ_AUDIT_SAMPLE_RATE', '0'),
+    );
+  }
+
+  getMcpRateLimitWindowSeconds(): number {
+    return parseInt(
+      this.configService.get<string>('MCP_RATE_LIMIT_WINDOW_SECONDS', '60'),
+      10,
+    );
+  }
+
+  getMcpRateLimitMaxRequests(): number {
+    return parseInt(
+      this.configService.get<string>('MCP_RATE_LIMIT_MAX_REQUESTS', '120'),
+      10,
+    );
+  }
+
+  getMcpMetricsToken(): string {
+    return this.configService.get<string>('MCP_METRICS_TOKEN');
+  }
+
+  isVectorSearchEnabled(): boolean {
+    return (
+      this.isMcpEnabled() &&
+      this.configService
+        .get<string>('VECTOR_SEARCH_ENABLED', 'false')
+        .toLowerCase() === 'true'
+    );
+  }
+
+  getEmbeddingBaseUrl(): string {
+    return this.configService.get<string>('EMBEDDING_BASE_URL');
+  }
+
+  getEmbeddingApiKey(): string {
+    return this.configService.get<string>('EMBEDDING_API_KEY');
+  }
+
+  getEmbeddingModel(): string {
+    return this.configService.get<string>(
+      'EMBEDDING_MODEL',
+      'text-embedding-3-small',
+    );
+  }
+
+  getEmbeddingDimensions(): number {
+    return parseInt(
+      this.configService.get<string>('EMBEDDING_DIMENSIONS', '1536'),
+      10,
+    );
+  }
+
+  getEmbeddingBatchSize(): number {
+    return parseInt(
+      this.configService.get<string>('EMBEDDING_BATCH_SIZE', '32'),
+      10,
+    );
+  }
+
+  getEmbeddingTimeoutMs(): number {
+    return parseInt(
+      this.configService.get<string>('EMBEDDING_TIMEOUT_MS', '30000'),
+      10,
+    );
+  }
+
+  getEmbeddingMaxRetries(): number {
+    return parseInt(
+      this.configService.get<string>('EMBEDDING_MAX_RETRIES', '3'),
+      10,
+    );
+  }
+
+  getEmbeddingRetryBaseDelayMs(): number {
+    return parseInt(
+      this.configService.get<string>('EMBEDDING_RETRY_BASE_DELAY_MS', '500'),
+      10,
+    );
+  }
+
+  getVectorChunkMaxChars(): number {
+    return parseInt(
+      this.configService.get<string>('VECTOR_CHUNK_MAX_CHARS', '4000'),
+      10,
+    );
+  }
+
+  getVectorChunkOverlapChars(): number {
+    return parseInt(
+      this.configService.get<string>('VECTOR_CHUNK_OVERLAP_CHARS', '300'),
+      10,
+    );
+  }
+
+  getVectorHybridSemanticWeight(): number {
+    return parseFloat(
+      this.configService.get<string>('VECTOR_HYBRID_SEMANTIC_WEIGHT', '0.65'),
+    );
+  }
+
+  getVectorHybridKeywordWeight(): number {
+    return parseFloat(
+      this.configService.get<string>('VECTOR_HYBRID_KEYWORD_WEIGHT', '0.25'),
+    );
+  }
+
+  getVectorHybridRecencyWeight(): number {
+    return parseFloat(
+      this.configService.get<string>('VECTOR_HYBRID_RECENCY_WEIGHT', '0.10'),
+    );
+  }
+
   getAiDriver(): string {
     return this.configService.get<string>('AI_DRIVER');
   }

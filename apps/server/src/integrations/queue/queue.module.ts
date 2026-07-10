@@ -100,6 +100,18 @@ import { GeneralQueueProcessor } from './processors/general-queue.processor';
         removeOnFail: { count: 100 },
       },
     }),
+    BullModule.registerQueue({
+      name: QueueName.MCP_VECTOR_QUEUE,
+      defaultJobOptions: {
+        attempts: 5,
+        backoff: {
+          type: 'exponential',
+          delay: 5 * 1000,
+        },
+        removeOnComplete: { count: 500 },
+        removeOnFail: { count: 500 },
+      },
+    }),
   ],
   exports: [BullModule],
   providers: [GeneralQueueProcessor],

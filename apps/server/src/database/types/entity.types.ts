@@ -7,8 +7,14 @@ import {
   BaseRows,
   BaseViews,
   Comments,
+  DocmostMcpChunks,
+  DocmostMcpIndexJobs,
   Groups,
   Labels,
+  McpAuditLogs,
+  McpClients,
+  McpClientSpacePermissions,
+  McpIdempotencyKeys,
   Notifications,
   PageLabels,
   PageAccess as _PageAccess,
@@ -178,6 +184,46 @@ export type UpdatableUserMFA = Updateable<Omit<_UserMFA, 'id'>>;
 export type ApiKey = Selectable<ApiKeys>;
 export type InsertableApiKey = Insertable<ApiKeys>;
 export type UpdatableApiKey = Updateable<Omit<ApiKeys, 'id'>>;
+
+// MCP Clients
+export type McpClient = Selectable<McpClients>;
+export type InsertableMcpClient = Insertable<McpClients>;
+export type UpdatableMcpClient = Updateable<Omit<McpClients, 'id'>>;
+
+// MCP Client Space Permissions
+export type McpClientSpacePermission =
+  Selectable<McpClientSpacePermissions>;
+export type InsertableMcpClientSpacePermission =
+  Insertable<McpClientSpacePermissions>;
+export type UpdatableMcpClientSpacePermission = Updateable<
+  Omit<McpClientSpacePermissions, 'id'>
+>;
+
+// MCP Audit Logs
+export type McpAuditLog = Selectable<McpAuditLogs>;
+export type InsertableMcpAuditLog = Insertable<McpAuditLogs>;
+export type UpdatableMcpAuditLog = Updateable<Omit<McpAuditLogs, 'id'>>;
+
+// MCP Idempotency Keys
+export type McpIdempotencyKey = Selectable<McpIdempotencyKeys>;
+export type InsertableMcpIdempotencyKey = Insertable<McpIdempotencyKeys>;
+export type UpdatableMcpIdempotencyKey = Updateable<
+  Omit<McpIdempotencyKeys, 'id'>
+>;
+
+// Docmost MCP Chunks
+export type DocmostMcpChunk = Selectable<DocmostMcpChunks>;
+export type InsertableDocmostMcpChunk = Insertable<DocmostMcpChunks>;
+export type UpdatableDocmostMcpChunk = Updateable<
+  Omit<DocmostMcpChunks, 'id'>
+>;
+
+// Docmost MCP Index Jobs
+export type DocmostMcpIndexJob = Selectable<DocmostMcpIndexJobs>;
+export type InsertableDocmostMcpIndexJob = Insertable<DocmostMcpIndexJobs>;
+export type UpdatableDocmostMcpIndexJob = Updateable<
+  Omit<DocmostMcpIndexJobs, 'id'>
+>;
 
 // Scim Tokens
 export type ScimToken = Selectable<ScimTokens>;

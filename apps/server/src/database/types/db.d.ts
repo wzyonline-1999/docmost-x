@@ -77,6 +77,44 @@ export interface Audit {
   workspaceId: string;
 }
 
+export interface DocmostMcpChunks {
+  chunkIndex: number;
+  content: string;
+  contentHash: string;
+  createdAt: Generated<Timestamp>;
+  deletedAt: Timestamp | null;
+  embedding: number[];
+  embeddingDimensions: Generated<number>;
+  embeddingModel: string;
+  id: Generated<string>;
+  indexedAt: Timestamp | null;
+  metadata: Generated<Json>;
+  pageId: string;
+  spaceId: string;
+  title: string | null;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
+export interface DocmostMcpIndexJobs {
+  attemptCount: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  dedupeKey: string | null;
+  finishedAt: Timestamp | null;
+  id: Generated<string>;
+  jobType: string;
+  lastError: string | null;
+  pageId: string | null;
+  requestedByClientId: string | null;
+  requestedByUserId: string | null;
+  spaceId: string | null;
+  startedAt: Timestamp | null;
+  stats: Generated<Json>;
+  status: Generated<string>;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
 export interface AuthAccounts {
   authProviderId: string | null;
   createdAt: Generated<Timestamp>;
@@ -515,6 +553,84 @@ export interface Labels {
   updatedAt: Generated<Timestamp>;
 }
 
+export interface McpAuditLogs {
+  actorUserId: string | null;
+  after: Json | null;
+  before: Json | null;
+  clientId: string | null;
+  createdAt: Generated<Timestamp>;
+  event: string;
+  id: Generated<string>;
+  ipAddress: string | null;
+  metadata: Json | null;
+  requestId: string | null;
+  resourceId: string | null;
+  resourceType: string;
+  spaceId: string | null;
+  toolName: string;
+  workspaceId: string;
+}
+
+export interface McpClients {
+  actorUserId: string | null;
+  createdAt: Generated<Timestamp>;
+  createdById: string | null;
+  deletedAt: Timestamp | null;
+  expiresAt: Timestamp | null;
+  globalScopes: Generated<Json>;
+  id: Generated<string>;
+  lastUsedAt: Timestamp | null;
+  name: string;
+  status: Generated<string>;
+  tokenHash: string;
+  tokenLastFour: string;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
+export interface McpClientSpacePermissions {
+  canAppend: Generated<boolean>;
+  canCreate: Generated<boolean>;
+  canDelete: Generated<boolean>;
+  canIndex: Generated<boolean>;
+  canRead: Generated<boolean>;
+  canRestore: Generated<boolean>;
+  canSearch: Generated<boolean>;
+  canSemanticSearch: Generated<boolean>;
+  canUpdate: Generated<boolean>;
+  clientId: string;
+  createdAt: Generated<Timestamp>;
+  deletedAt: Timestamp | null;
+  id: Generated<string>;
+  spaceId: string;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
+export interface McpIdempotencyKeys {
+  action: string;
+  beforeState: Json | null;
+  clientId: string;
+  completedAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  deletedAt: Timestamp | null;
+  expiresAt: Timestamp | null;
+  id: Generated<string>;
+  idempotencyKey: string;
+  leaseExpiresAt: Timestamp | null;
+  leaseOwner: string | null;
+  lastError: string | null;
+  operationStage: Generated<string>;
+  requestHash: string | null;
+  resourceId: string | null;
+  resourceType: string | null;
+  response: Json | null;
+  status: Generated<string>;
+  targetState: Json | null;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
 export interface PageAccess {
   id: Generated<string>;
   pageId: string;
@@ -650,11 +766,17 @@ export interface DB {
   baseViews: BaseViews;
   billing: Billing;
   comments: Comments;
+  docmostMcpChunks: DocmostMcpChunks;
+  docmostMcpIndexJobs: DocmostMcpIndexJobs;
   favorites: Favorites;
   fileTasks: FileTasks;
   groups: Groups;
   groupUsers: GroupUsers;
   labels: Labels;
+  mcpAuditLogs: McpAuditLogs;
+  mcpClients: McpClients;
+  mcpClientSpacePermissions: McpClientSpacePermissions;
+  mcpIdempotencyKeys: McpIdempotencyKeys;
   notifications: Notifications;
   pageAccess: PageAccess;
   pageTransclusionReferences: PageTransclusionReferences;

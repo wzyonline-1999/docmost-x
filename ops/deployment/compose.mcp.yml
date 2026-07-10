@@ -1,0 +1,60 @@
+name: docmost-mcp
+
+services:
+  docmost:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: ${DOCMOST_IMAGE:-docmost-mcp:local}
+    env_file:
+      - ../../.env.prod
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:${DOCMOST_BIND_PORT:-3000}:3000
+    restart: unless-stopped
+    volumes:
+      - docmost_data:/app/data/storage
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://127.0.0.1:3000/api/health]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 45s
+
+  redis:
+    image: redis:8-alpine
+    command: [redis-server, --appendonly, "yes", --maxmemory-policy, noeviction]
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  db:
+    profiles: [local-database]
+    image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-docmost}
+      POSTGRES_USER: ${POSTGRES_USER:-docmost}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    restart: unless-stopped
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  docmost_data:
+  postgres_data:
+  redis_data:

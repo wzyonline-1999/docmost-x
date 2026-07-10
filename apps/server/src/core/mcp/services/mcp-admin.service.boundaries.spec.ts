@@ -1,0 +1,324 @@
+import { BadRequestException } from '@nestjs/common';
+import type { KyselyDB } from '@docmost/db/types/kysely.types';
+import { ListMcpAuditLogsDto, ListMcpClientsDto } from '../dto/mcp-admin.dto';
+import type { McpAuditService } from './mcp-audit.service';
+import { McpAdminService } from './mcp-admin.service';
+import type { McpTokenService } from './mcp-token.service';
+import type { McpVectorIndexService } from './mcp-vector-index.service';
+
+describe('McpAdminService admin boundaries', () => {
+  const workspaceId = 'workspace-1';
+  const client = {
+    id: 'client-1',
+    workspaceId,
+    name: 'Codex',
+    status: 'active',
+    tokenHash: 'secret-token-hash',
+    tokenLastFour: 'last',
+    globalScopes: {},
+    actorUserId: 'actor-1',
+    createdById: 'admin-1',
+    expiresAt: null,
+    lastUsedAt: null,
+    createdAt: new Date('2026-07-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-07-02T00:00:00.000Z'),
+    deletedAt: null,
+  };
+  const permission = {
+    id: 'permission-1',
+    clientId: client.id,
+    workspaceId,
+    spaceId: 'space-1',
+    canSearch: true,
+    canSemanticSearch: false,
+    canRead: true,
+    canCreate: false,
+    canUpdate: false,
+    canAppend: false,
+    canDelete: false,
+    canRestore: false,
+    canIndex: false,
+    createdAt: new Date('2026-07-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-07-02T00:00:00.000Z'),
+    deletedAt: null,
+  };
+  const auditLog = {
+    id: 'audit-1',
+    workspaceId,
+    clientId: client.id,
+    actorUserId: 'actor-1',
+    event: 'mcp.page.update',
+    resourceType: 'page',
+    resourceId: 'page-1',
+    spaceId: permission.spaceId,
+    toolName: 'update_page',
+    requestId: 'request-1',
+    before: { title: 'Before' },
+    after: { title: 'After' },
+    metadata: { outcome: 'completed' },
+    ipAddress: '127.0.0.1',
+    createdAt: new Date('2026-07-03T00:00:00.000Z'),
+  };
+  const clientQuery = {
+    selectAll: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
+    execute: jest.fn(),
+    executeTakeFirst: jest.fn(),
+  };
+  const permissionQuery = {
+    selectAll: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    execute: jest.fn(),
+  };
+  const userQuery = {
+    select: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    executeTakeFirst: jest.fn(),
+  };
+  const spaceQuery = {
+    select: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    execute: jest.fn(),
+  };
+  const auditQuery = {
+    selectAll: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
+    execute: jest.fn(),
+  };
+  const selectFrom = jest.fn((table: string) => {
+    if (table === 'mcpClients') return clientQuery;
+    if (table === 'mcpClientSpacePermissions') return permissionQuery;
+    if (table === 'users') return userQuery;
+    if (table === 'spaces') return spaceQuery;
+    return auditQuery;
+  });
+  const db = {
+    selectFrom,
+    transaction: jest.fn(),
+  };
+  const tokenService = {
+    generateToken: jest.fn(),
+    hashToken: jest.fn(),
+    getTokenLastFour: jest.fn(),
+  };
+  const auditService = {
+    log: jest.fn(),
+  };
+  const vectorIndexService = {
+    reconcileSpaceEligibility: jest.fn(),
+  };
+  let service: McpAdminService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    clientQuery.execute.mockResolvedValue([client]);
+    clientQuery.executeTakeFirst.mockResolvedValue(client);
+    permissionQuery.execute.mockResolvedValue([permission]);
+    userQuery.executeTakeFirst.mockResolvedValue({
+      id: 'actor-1',
+      workspaceId,
+      deactivatedAt: null,
+      deletedAt: null,
+    });
+    spaceQuery.execute.mockResolvedValue([{ id: permission.spaceId }]);
+    auditQuery.execute.mockResolvedValue([auditLog]);
+    service = new McpAdminService(
+      db as unknown as KyselyDB,
+      tokenService as unknown as McpTokenService,
+      auditService as unknown as McpAuditService,
+      vectorIndexService as unknown as McpVectorIndexService,
+    );
+  });
+
+  it('rejects duplicate create permissions before any database mutation', async () => {
+    await expect(
+      service.createClient(workspaceId, 'admin-1', {
+        name: 'Codex',
+        permissions: [
+          { spaceId: permission.spaceId, canRead: true },
+          { spaceId: permission.spaceId, canSearch: true },
+        ],
+      }),
+    ).rejects.toThrow('Duplicate MCP space permissions');
+
+    expect(db.selectFrom).not.toHaveBeenCalled();
+    expect(db.transaction).not.toHaveBeenCalled();
+    expect(tokenService.generateToken).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      {
+        id: 'actor-2',
+        workspaceId: 'workspace-2',
+        deactivatedAt: null,
+        deletedAt: null,
+      },
+    ],
+    [
+      {
+        id: 'actor-1',
+        workspaceId,
+        deactivatedAt: new Date(),
+        deletedAt: null,
+      },
+    ],
+    [
+      {
+        id: 'actor-1',
+        workspaceId,
+        deactivatedAt: null,
+        deletedAt: new Date(),
+      },
+    ],
+    [undefined],
+  ])('rejects an unavailable or cross-workspace actor %p', async (actor) => {
+    userQuery.executeTakeFirst.mockResolvedValueOnce(actor);
+
+    await expect(
+      service.createClient(workspaceId, 'admin-1', {
+        name: 'Codex',
+        actorUserId: 'actor-1',
+      }),
+    ).rejects.toThrow('Invalid MCP actor user');
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a cross-workspace actor on client update before mutation', async () => {
+    userQuery.executeTakeFirst.mockResolvedValueOnce({
+      id: 'actor-2',
+      workspaceId: 'workspace-2',
+      deactivatedAt: null,
+      deletedAt: null,
+    });
+
+    await expect(
+      service.updateClient(workspaceId, 'admin-1', {
+        clientId: client.id,
+        actorUserId: 'actor-2',
+      }),
+    ).rejects.toThrow('Invalid MCP actor user');
+
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['not-a-date', 'valid date'],
+    ['2020-01-01T00:00:00.000Z', 'in the future'],
+  ])('rejects an invalid expiration %s', async (expiresAt, message) => {
+    await expect(
+      service.createClient(workspaceId, 'admin-1', {
+        name: 'Codex',
+        expiresAt,
+      }),
+    ).rejects.toThrow(message);
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('lists scoped clients and never exposes token hashes', async () => {
+    const dto = Object.assign(new ListMcpClientsDto(), {
+      limit: 500,
+      status: 'active',
+      query: 'code',
+    });
+    const result = await service.listClients(workspaceId, dto);
+
+    expect(clientQuery.where).toHaveBeenCalledWith(
+      'workspaceId',
+      '=',
+      workspaceId,
+    );
+    expect(clientQuery.where).toHaveBeenCalledWith('deletedAt', 'is', null);
+    expect(clientQuery.where).toHaveBeenCalledWith('status', '=', 'active');
+    expect(clientQuery.where).toHaveBeenCalledWith('name', 'ilike', '%code%');
+    expect(clientQuery.limit).toHaveBeenCalledWith(100);
+    expect(result.items[0]).toEqual(
+      expect.objectContaining({
+        id: client.id,
+        tokenLastFour: client.tokenLastFour,
+        permissions: [expect.objectContaining({ id: permission.id })],
+      }),
+    );
+    expect(JSON.stringify(result)).not.toContain(client.tokenHash);
+  });
+
+  it('combines audit filters inside the authenticated workspace', async () => {
+    const dto = Object.assign(new ListMcpAuditLogsDto(), {
+      clientId: client.id,
+      spaceId: permission.spaceId,
+      event: auditLog.event,
+      toolName: auditLog.toolName,
+      resourceType: auditLog.resourceType,
+      resourceId: auditLog.resourceId,
+      from: '2026-07-01T00:00:00.000Z',
+      to: '2026-07-04T00:00:00.000Z',
+      query: 'request',
+      limit: 50,
+    });
+    const result = await service.listAuditLogs(workspaceId, dto);
+
+    expect(auditQuery.where).toHaveBeenCalledWith(
+      'workspaceId',
+      '=',
+      workspaceId,
+    );
+    expect(auditQuery.where).toHaveBeenCalledWith('clientId', '=', client.id);
+    expect(auditQuery.where).toHaveBeenCalledWith(
+      'spaceId',
+      '=',
+      permission.spaceId,
+    );
+    expect(auditQuery.where).toHaveBeenCalledWith('event', '=', auditLog.event);
+    expect(auditQuery.where).toHaveBeenCalledWith(
+      'toolName',
+      '=',
+      auditLog.toolName,
+    );
+    expect(auditQuery.where).toHaveBeenCalledWith(
+      'resourceType',
+      '=',
+      auditLog.resourceType,
+    );
+    expect(auditQuery.where).toHaveBeenCalledWith(
+      'resourceId',
+      '=',
+      auditLog.resourceId,
+    );
+    expect(auditQuery.where).toHaveBeenCalledWith(
+      'createdAt',
+      '>=',
+      new Date('2026-07-01T00:00:00.000Z'),
+    );
+    expect(auditQuery.where).toHaveBeenCalledWith(
+      'createdAt',
+      '<=',
+      new Date('2026-07-04T00:00:00.000Z'),
+    );
+    expect(auditQuery.where).toHaveBeenCalledWith(expect.any(Function));
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        id: auditLog.id,
+        workspaceId,
+        requestId: auditLog.requestId,
+      }),
+    ]);
+  });
+
+  it('rejects inverted audit date ranges before querying logs', async () => {
+    await expect(
+      service.listAuditLogs(
+        workspaceId,
+        Object.assign(new ListMcpAuditLogsDto(), {
+          from: '2026-07-05T00:00:00.000Z',
+          to: '2026-07-04T00:00:00.000Z',
+        }),
+      ),
+    ).rejects.toThrow(BadRequestException);
+    expect(auditQuery.execute).not.toHaveBeenCalled();
+  });
+});

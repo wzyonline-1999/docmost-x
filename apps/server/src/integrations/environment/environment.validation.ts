@@ -2,6 +2,7 @@ import {
   IsIn,
   IsNotEmpty,
   IsNotIn,
+  IsNumberString,
   IsOptional,
   IsString,
   IsUrl,
@@ -101,6 +102,112 @@ export class EnvironmentVariables {
   @IsISO6391()
   @IsString()
   TYPESENSE_LOCALE: string;
+
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  @IsString()
+  MCP_ENABLED: string;
+
+  @IsOptional()
+  @IsUrl({ protocols: ['http', 'https'], require_tld: false })
+  MCP_PUBLIC_BASE_URL: string;
+
+  @ValidateIf((obj) => obj.MCP_ENABLED === 'true')
+  @IsNotEmpty()
+  @MinLength(32)
+  @IsString()
+  MCP_TOKEN_HASH_SECRET: string;
+
+  @IsOptional()
+  @IsNumberString()
+  MCP_MAX_QUERY_LENGTH: string;
+
+  @IsOptional()
+  @IsNumberString()
+  MCP_MAX_WRITE_CONTENT_LENGTH: string;
+
+  @IsOptional()
+  @IsString()
+  MCP_READ_AUDIT_SAMPLE_RATE: string;
+
+  @IsOptional()
+  @IsNumberString()
+  MCP_RATE_LIMIT_WINDOW_SECONDS: string;
+
+  @IsOptional()
+  @IsNumberString()
+  MCP_RATE_LIMIT_MAX_REQUESTS: string;
+
+  @IsOptional()
+  @MinLength(32)
+  @IsString()
+  MCP_METRICS_TOKEN: string;
+
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  @IsString()
+  VECTOR_SEARCH_ENABLED: string;
+
+  @ValidateIf(
+    (obj) => obj.MCP_ENABLED === 'true' && obj.VECTOR_SEARCH_ENABLED === 'true',
+  )
+  @IsUrl({ protocols: ['http', 'https'], require_tld: false })
+  EMBEDDING_BASE_URL: string;
+
+  @ValidateIf(
+    (obj) => obj.MCP_ENABLED === 'true' && obj.VECTOR_SEARCH_ENABLED === 'true',
+  )
+  @IsString()
+  @IsNotEmpty()
+  EMBEDDING_API_KEY: string;
+
+  @IsOptional()
+  @IsString()
+  EMBEDDING_MODEL: string;
+
+  @IsOptional()
+  @IsIn(['1536'], {
+    message:
+      'EMBEDDING_DIMENSIONS must be 1536; changing dimensions requires a database migration and full vector reindex',
+  })
+  @IsString()
+  EMBEDDING_DIMENSIONS: string;
+
+  @IsOptional()
+  @IsNumberString()
+  EMBEDDING_BATCH_SIZE: string;
+
+  @IsOptional()
+  @IsNumberString()
+  EMBEDDING_TIMEOUT_MS: string;
+
+  @IsOptional()
+  @IsNumberString()
+  EMBEDDING_MAX_RETRIES: string;
+
+  @IsOptional()
+  @IsNumberString()
+  EMBEDDING_RETRY_BASE_DELAY_MS: string;
+
+  @IsOptional()
+  @IsNumberString()
+  VECTOR_CHUNK_MAX_CHARS: string;
+
+  @IsOptional()
+  @IsNumberString()
+  VECTOR_CHUNK_OVERLAP_CHARS: string;
+
+  @IsOptional()
+  @IsNumberString()
+  VECTOR_HYBRID_SEMANTIC_WEIGHT: string;
+
+  @IsOptional()
+  @IsNumberString()
+  VECTOR_HYBRID_KEYWORD_WEIGHT: string;
+
+  @IsOptional()
+  @IsNumberString()
+  VECTOR_HYBRID_RECENCY_WEIGHT: string;
 
   @IsOptional()
   @ValidateIf((obj) => obj.AI_DRIVER)

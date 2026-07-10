@@ -1,0 +1,183 @@
+name: MCP quality gates
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/mcp-quality.yml"
+      - ".env.example"
+      - "apps/client/src/components/auth/**"
+      - "apps/client/src/features/mcp/**"
+      - "apps/client/src/pages/settings/mcp/**"
+      - "apps/server/src/core/mcp/**"
+      - "apps/server/src/core/page/**"
+      - "apps/server/src/collaboration/extensions/persistence.extension.ts"
+      - "apps/server/src/collaboration/extensions/persistence.extension.spec.ts"
+      - "apps/server/src/database/migrations/2026070*T*-mcp-*.ts"
+      - "apps/server/src/database/migrations/20260710T*-mcp-*.ts"
+      - "apps/server/src/database/repos/page/**"
+      - "apps/server/src/integrations/environment/**"
+      - "apps/server/test/mcp-*.ts"
+      - "ops/**"
+      - "specs/docmost-mcp-vector/**"
+      - "pnpm-lock.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_DB: docmost_mcp_migration_test_ci
+          POSTGRES_USER: docmost
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U docmost -d docmost_mcp_migration_test_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.4.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check formatting
+        run: >-
+          pnpm exec prettier --check
+          "apps/server/src/core/mcp/**/*.ts"
+          "apps/server/src/core/page/services/page.service.ts"
+          "apps/server/src/core/page/services/page.service.optimistic-lock.spec.ts"
+          "apps/server/src/collaboration/extensions/persistence.extension.ts"
+          "apps/server/src/collaboration/extensions/persistence.extension.spec.ts"
+          "apps/server/test/mcp-*.ts"
+          "apps/server/src/database/migrations/20260709T120000-mcp-vector.ts"
+          "apps/server/src/database/migrations/20260710T*-mcp-*.ts"
+          "apps/server/src/integrations/environment/environment.service.ts"
+          "apps/server/src/integrations/environment/environment.service.spec.ts"
+          "apps/server/src/integrations/environment/environment.validation.ts"
+          "apps/client/src/components/auth/**/*.{ts,tsx}"
+          "apps/client/src/features/mcp/**/*.{ts,tsx,css}"
+          "apps/client/src/pages/settings/mcp/**/*.{ts,tsx}"
+          "ops/**/*.{md,yml,json}"
+          "specs/docmost-mcp-vector/**/*.md"
+
+      - name: Lint MCP server
+        run: >-
+          pnpm --filter server exec eslint
+          "src/core/mcp/**/*.ts"
+          "src/core/page/services/page.service.ts"
+          "src/core/page/services/page.service.optimistic-lock.spec.ts"
+          "src/collaboration/extensions/persistence.extension.ts"
+          "src/collaboration/extensions/persistence.extension.spec.ts"
+          "test/mcp-*.ts"
+          "src/database/migrations/20260709T120000-mcp-vector.ts"
+          "src/database/migrations/20260710T*-mcp-*.ts"
+          "src/integrations/environment/environment.service.ts"
+          "src/integrations/environment/environment.service.spec.ts"
+          "src/integrations/environment/environment.validation.ts"
+
+      - name: Lint MCP client
+        run: >-
+          pnpm --filter client exec eslint
+          "src/components/auth/**/*.{ts,tsx}"
+          "src/features/mcp/**/*.{ts,tsx}"
+          "src/pages/settings/mcp/**/*.{ts,tsx}"
+
+      - name: Type check
+        run: |
+          pnpm exec tsc --noEmit -p apps/server/tsconfig.json
+          pnpm exec tsc --noEmit -p apps/client/tsconfig.json
+
+      - name: Build production bundles
+        run: pnpm build
+
+      - name: Run MCP unit and protocol tests
+        run: |
+          pnpm --filter server test:mcp
+          pnpm --filter server test:mcp:sdk
+          pnpm --filter server test:mcp:write-path
+          pnpm --filter server exec jest --runInBand src/integrations/environment/environment.service.spec.ts
+
+      - name: Enforce MCP core coverage
+        run: |
+          pnpm --filter server test:mcp:coverage
+          pnpm --filter server test:mcp:coverage:check
+
+      - name: Rehearse private-schema migrations
+        env:
+          DATABASE_URL: postgresql://docmost:ci-only-password@127.0.0.1:5432/docmost_mcp_migration_test_ci
+          MCP_MIGRATION_TEST_SCHEMA: docmost
+        run: pnpm --filter server test:mcp:migrations
+
+      - name: Boot migrated application and check dependencies
+        env:
+          APP_URL: http://127.0.0.1:3100
+          APP_SECRET: ci-only-app-secret-ci-only-app-secret
+          DATABASE_URL: postgresql://docmost:ci-only-password@127.0.0.1:5432/docmost_mcp_migration_test_ci?options=-c%20search_path%3Ddocmost
+          REDIS_URL: redis://127.0.0.1:6379
+          PORT: 3100
+          MCP_ENABLED: "false"
+          VECTOR_SEARCH_ENABLED: "false"
+        run: |
+          pnpm --filter server start:prod >/tmp/docmost-mcp-ci.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          healthy=false
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3100/api/health >/tmp/docmost-health.json; then
+              healthy=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$healthy" != true ]; then
+            cat /tmp/docmost-mcp-ci.log
+            exit 1
+          fi
+          cat /tmp/docmost-health.json
+          curl --fail --silent \
+            --request POST \
+            --header 'content-type: application/json' \
+            --header 'authorization: Bearer dmost_mcp_disabled' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+            http://127.0.0.1:3100/mcp >/tmp/docmost-mcp-disabled.json
+          node -e 'const value=JSON.parse(require("fs").readFileSync("/tmp/docmost-mcp-disabled.json","utf8")); if(value?.error?.message!=="MCP is disabled") process.exit(1)'
+
+      - name: Scan tracked files for generated secrets
+        run: |
+          secret_pattern='dmost_mcp_[A-Za-z0-9_-]{30,}|s''k-[A-Za-z0-9_-]{20,}|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|EMBEDDING_API_''KEY=[^<[:space:]]+'
+          if git grep -En "$secret_pattern" -- .; then
+            echo 'Potential generated secret found in tracked files.'
+            exit 1
+          fi

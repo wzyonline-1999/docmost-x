@@ -10,6 +10,7 @@ export enum QueueName {
   NOTIFICATION_QUEUE = '{notification-queue}',
   AUDIT_QUEUE = '{audit-queue}',
   BASE_QUEUE = '{base-queue}',
+  MCP_VECTOR_QUEUE = '{mcp-vector-queue}',
 }
 
 export enum QueueJob {
@@ -88,4 +89,6 @@ export enum QueueJob {
   BASE_TYPE_CONVERSION = 'base-type-conversion',
   BASE_CELL_GC = 'base-cell-gc',
   BASE_RECOMPUTE = 'base-recompute',
+
+  MCP_VECTOR_RUN_JOB = 'mcp-vector-run-job',
 }

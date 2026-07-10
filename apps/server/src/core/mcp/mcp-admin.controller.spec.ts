@@ -1,0 +1,215 @@
+import { ForbiddenException } from '@nestjs/common';
+import { User, Workspace } from '@docmost/db/types/entity.types';
+import { McpAdminController } from './mcp-admin.controller';
+import { ListMcpAuditLogsDto, ListMcpClientsDto } from './dto/mcp-admin.dto';
+import { McpAdminService } from './services/mcp-admin.service';
+import WorkspaceAbilityFactory from '../casl/abilities/workspace-ability.factory';
+
+describe('McpAdminController', () => {
+  const adminService = {
+    listClients: jest.fn(),
+    getClient: jest.fn(),
+    createClient: jest.fn(),
+    updateClient: jest.fn(),
+    disableClient: jest.fn(),
+    deleteClient: jest.fn(),
+    rotateClientToken: jest.fn(),
+    listAuditLogs: jest.fn(),
+    upsertSpacePermission: jest.fn(),
+    deleteSpacePermission: jest.fn(),
+  };
+  const workspaceAbility = {
+    createForUser: jest.fn(),
+  };
+  const workspace = { id: 'workspace-1' };
+  const adminUser = { id: 'user-1', role: 'admin' };
+
+  let controller: McpAdminController;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    workspaceAbility.createForUser.mockReturnValue({
+      cannot: jest.fn(() => false),
+    });
+    adminService.createClient.mockResolvedValue({
+      token: 'dmost_mcp_secret',
+      client: { id: 'client-1', tokenLastFour: 'cret' },
+      permissions: [],
+    });
+    adminService.listClients.mockResolvedValue({ items: [], meta: {} });
+    adminService.rotateClientToken.mockResolvedValue({
+      token: 'dmost_mcp_rotated',
+      client: { id: 'client-1', tokenLastFour: 'ated' },
+      permissions: [],
+    });
+    adminService.listAuditLogs.mockResolvedValue({ items: [], meta: {} });
+    controller = new McpAdminController(
+      adminService as unknown as McpAdminService,
+      workspaceAbility as unknown as WorkspaceAbilityFactory,
+    );
+  });
+
+  it('creates a client for workspace API admins', async () => {
+    const response = await controller.createClient(
+      { name: 'Codex MCP' },
+      adminUser as unknown as User,
+      workspace as unknown as Workspace,
+    );
+
+    expect(response).toMatchObject({
+      token: 'dmost_mcp_secret',
+      client: { id: 'client-1' },
+    });
+    expect(adminService.createClient).toHaveBeenCalledWith(
+      'workspace-1',
+      'user-1',
+      { name: 'Codex MCP' },
+    );
+  });
+
+  it('rotates a client token for workspace API admins', async () => {
+    const response = await controller.rotateClientToken(
+      { clientId: 'client-1' },
+      adminUser as unknown as User,
+      workspace as unknown as Workspace,
+    );
+
+    expect(response).toMatchObject({
+      token: 'dmost_mcp_rotated',
+      client: { id: 'client-1' },
+    });
+    expect(adminService.rotateClientToken).toHaveBeenCalledWith(
+      'workspace-1',
+      'user-1',
+      'client-1',
+    );
+  });
+
+  it('lists audit logs for workspace API admins', async () => {
+    const dto = Object.assign(new ListMcpAuditLogsDto(), {
+      clientId: 'client-1',
+    });
+
+    const response = await controller.listAuditLogs(
+      dto,
+      adminUser as unknown as User,
+      workspace as unknown as Workspace,
+    );
+
+    expect(response).toEqual({ items: [], meta: {} });
+    expect(adminService.listAuditLogs).toHaveBeenCalledWith('workspace-1', dto);
+  });
+
+  it.each([
+    [
+      'list clients',
+      () =>
+        controller.listClients(
+          new ListMcpClientsDto(),
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.listClients,
+    ],
+    [
+      'get client',
+      () =>
+        controller.getClient(
+          { clientId: 'client-1' },
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.getClient,
+    ],
+    [
+      'create client',
+      () =>
+        controller.createClient(
+          { name: 'Blocked client' },
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.createClient,
+    ],
+    [
+      'update client',
+      () =>
+        controller.updateClient(
+          { clientId: 'client-1' },
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.updateClient,
+    ],
+    [
+      'disable client',
+      () =>
+        controller.disableClient(
+          { clientId: 'client-1' },
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.disableClient,
+    ],
+    [
+      'delete client',
+      () =>
+        controller.deleteClient(
+          { clientId: 'client-1' },
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.deleteClient,
+    ],
+    [
+      'rotate token',
+      () =>
+        controller.rotateClientToken(
+          { clientId: 'client-1' },
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.rotateClientToken,
+    ],
+    [
+      'list audit logs',
+      () =>
+        controller.listAuditLogs(
+          new ListMcpAuditLogsDto(),
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.listAuditLogs,
+    ],
+    [
+      'upsert permission',
+      () =>
+        controller.upsertSpacePermission(
+          { clientId: 'client-1', spaceId: 'space-1' },
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.upsertSpacePermission,
+    ],
+    [
+      'delete permission',
+      () =>
+        controller.deleteSpacePermission(
+          { clientId: 'client-1', spaceId: 'space-1' },
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.deleteSpacePermission,
+    ],
+  ])(
+    'blocks users that cannot manage workspace API credentials from %s',
+    (_name, invoke, serviceMethod) => {
+      workspaceAbility.createForUser.mockReturnValue({
+        cannot: jest.fn(() => true),
+      });
+
+      expect(invoke).toThrow(ForbiddenException);
+      expect(serviceMethod).not.toHaveBeenCalled();
+    },
+  );
+});

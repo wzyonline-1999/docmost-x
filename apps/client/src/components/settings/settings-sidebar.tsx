@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Group, Text, ScrollArea, ActionIcon } from "@mantine/core";
 import {
   IconUser,
@@ -9,6 +9,7 @@ import {
   IconSpaces,
   IconBrush,
   IconWorld,
+  IconApi,
 } from "@tabler/icons-react";
 import { Link, useLocation } from "react-router-dom";
 import classes from "./settings.module.css";
@@ -58,6 +59,12 @@ const groupedData: DataGroup[] = [
       { label: "Groups", icon: IconUsersGroup, path: "/settings/groups" },
       { label: "Spaces", icon: IconSpaces, path: "/settings/spaces" },
       { label: "Public sharing", icon: IconWorld, path: "/settings/sharing" },
+      {
+        label: "MCP",
+        icon: IconApi,
+        path: "/settings/mcp",
+        role: "admin",
+      },
     ],
   },
 ];
@@ -65,15 +72,10 @@ const groupedData: DataGroup[] = [
 export default function SettingsSidebar() {
   const { t } = useTranslation();
   const location = useLocation();
-  const [active, setActive] = useState(location.pathname);
   const { goBack } = useSettingsNavigation();
   const { isAdmin, isOwner } = useUserRole();
   const [mobileSidebarOpened] = useAtom(mobileSidebarAtom);
   const toggleMobileSidebar = useToggleSidebar(mobileSidebarAtom);
-
-  useEffect(() => {
-    setActive(location.pathname);
-  }, [location.pathname]);
 
   const canShowItem = (item: DataItem) => {
     if (item.role === "admin" && !isAdmin) return false;
@@ -114,7 +116,7 @@ export default function SettingsSidebar() {
             <Link
               onMouseEnter={prefetchHandler}
               className={classes.link}
-              data-active={active.startsWith(item.path) || undefined}
+              data-active={location.pathname.startsWith(item.path) || undefined}
               key={item.label}
               to={item.path}
               onClick={() => {

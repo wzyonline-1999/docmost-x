@@ -134,29 +134,45 @@ export class PageRepo {
     updatablePage: UpdatablePage,
     pageId: string,
     trx?: KyselyTransaction,
+    opts?: { expectedUpdatedAt?: Date },
   ) {
-    return this.updatePages(updatablePage, [pageId], trx);
+    return this.updatePages(updatablePage, [pageId], trx, opts);
   }
 
   async updatePages(
     updatePageData: UpdatablePage,
     pageIds: string[],
     trx?: KyselyTransaction,
+    opts?: { expectedUpdatedAt?: Date },
   ) {
-    const result = await dbOrTx(this.db, trx)
+    const updatedAt = updatePageData.updatedAt ?? new Date();
+    let query = dbOrTx(this.db, trx)
       .updateTable('pages')
-      .set({ ...updatePageData, updatedAt: new Date() })
+      .set({ ...updatePageData, updatedAt })
       .where(
         pageIds.some((pageId) => !isValidUUID(pageId)) ? 'slugId' : 'id',
         'in',
         pageIds,
-      )
-      .executeTakeFirst();
+      );
 
-    this.eventEmitter.emit(EventName.PAGE_UPDATED, {
-      pageIds: pageIds,
-      workspaceId: updatePageData.workspaceId,
-    });
+    if (opts?.expectedUpdatedAt) {
+      query = query
+        .where('updatedAt', '>=', opts.expectedUpdatedAt)
+        .where(
+          'updatedAt',
+          '<',
+          new Date(opts.expectedUpdatedAt.getTime() + 1),
+        );
+    }
+
+    const result = await query.executeTakeFirst();
+
+    if (Number(result.numUpdatedRows) > 0) {
+      this.eventEmitter.emit(EventName.PAGE_UPDATED, {
+        pageIds: pageIds,
+        workspaceId: updatePageData.workspaceId,
+      });
+    }
 
     return result;
   }

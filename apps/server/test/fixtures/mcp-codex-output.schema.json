@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "spaceId": { "type": "string" },
+    "pageId": { "type": "string" },
+    "title": { "type": "string" },
+    "contentIncludesBeacon": { "type": "boolean", "const": true }
+  },
+  "required": ["spaceId", "pageId", "title", "contentIncludesBeacon"],
+  "additionalProperties": false
+}

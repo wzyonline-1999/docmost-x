@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -54,6 +55,7 @@ import {
 import { markdownToHtml } from '@docmost/editor-ext';
 import { WatcherService } from '../../watcher/watcher.service';
 import { sql } from 'kysely';
+import { isDeepStrictEqual } from 'node:util';
 import { TransclusionService } from '../transclusion/transclusion.service';
 
 @Injectable()
@@ -119,7 +121,7 @@ export class PageService {
     let ydoc = undefined;
 
     if (createPageDto?.content && createPageDto?.format) {
-      const prosemirrorJson = await this.parseProsemirrorContent(
+      const prosemirrorJson = await this.prepareProsemirrorContent(
         createPageDto.content,
         createPageDto.format,
       );
@@ -129,24 +131,27 @@ export class PageService {
       ydoc = createYdocFromJson(prosemirrorJson);
     }
 
-    const page = await this.pageRepo.insertPage({
-      slugId: generateSlugId(),
-      title: createPageDto.title,
-      position: await this.nextPagePosition(
-        createPageDto.spaceId,
-        parentPageId,
-      ),
-      icon: createPageDto.icon,
-      parentPageId: parentPageId,
-      spaceId: createPageDto.spaceId,
-      creatorId: userId,
-      workspaceId: workspaceId,
-      lastUpdatedById: userId,
-      isBase,
-      content,
-      textContent,
-      ydoc,
-    }, trx);
+    const page = await this.pageRepo.insertPage(
+      {
+        slugId: generateSlugId(),
+        title: createPageDto.title,
+        position: await this.nextPagePosition(
+          createPageDto.spaceId,
+          parentPageId,
+        ),
+        icon: createPageDto.icon,
+        parentPageId: parentPageId,
+        spaceId: createPageDto.spaceId,
+        creatorId: userId,
+        workspaceId: workspaceId,
+        lastUpdatedById: userId,
+        isBase,
+        content,
+        textContent,
+        ydoc,
+      },
+      trx,
+    );
 
     if (trx) {
       // Add the watcher inside the caller's transaction so the async worker
@@ -219,21 +224,113 @@ export class PageService {
     page: Page,
     updatePageDto: UpdatePageDto,
     user: User,
+    opts?: { expectedUpdatedAt?: Date; preparedContent?: object },
   ): Promise<Page> {
+    const preparedContent =
+      updatePageDto.content && updatePageDto.operation && updatePageDto.format
+        ? (opts?.preparedContent ??
+          (await this.prepareProsemirrorContent(
+            updatePageDto.content,
+            updatePageDto.format,
+          )))
+        : undefined;
+    let contentBefore = page.content;
+    if (
+      preparedContent &&
+      updatePageDto.operation !== 'replace' &&
+      typeof contentBefore === 'undefined'
+    ) {
+      contentBefore = (
+        await this.pageRepo.findById(page.id, { includeContent: true })
+      )?.content;
+    }
     const contributors = new Set<string>(page.contributorIds);
     contributors.add(user.id);
     const contributorIds = Array.from(contributors);
+    const updatedAt = new Date(
+      Math.max(Date.now(), new Date(page.updatedAt).getTime() + 1),
+    );
 
-    await this.pageRepo.updatePage(
+    const updateResult = await this.pageRepo.updatePage(
       {
         title: updatePageDto.title,
         icon: updatePageDto.icon,
         lastUpdatedById: user.id,
-        updatedAt: new Date(),
+        updatedAt,
         contributorIds: contributorIds,
       },
       page.id,
+      undefined,
+      opts?.expectedUpdatedAt
+        ? { expectedUpdatedAt: opts.expectedUpdatedAt }
+        : undefined,
     );
+
+    if (opts?.expectedUpdatedAt && Number(updateResult.numUpdatedRows) === 0) {
+      throw new ConflictException('Page changed since expectedUpdatedAt');
+    }
+
+    let resolvedPage: Page;
+    try {
+      if (
+        updatePageDto.content &&
+        updatePageDto.operation &&
+        updatePageDto.format
+      ) {
+        await this.updatePageContent(
+          page.id,
+          updatePageDto.content,
+          updatePageDto.operation,
+          updatePageDto.format,
+          user,
+          preparedContent,
+        );
+      }
+
+      resolvedPage = await this.pageRepo.findById(page.id, {
+        includeSpace: true,
+        includeContent: true,
+        includeCreator: true,
+        includeLastUpdatedBy: true,
+        includeContributors: true,
+      });
+
+      if (
+        preparedContent &&
+        updatePageDto.operation &&
+        !this.hasExpectedContent(
+          contentBefore,
+          resolvedPage?.content,
+          preparedContent,
+          updatePageDto.operation,
+        )
+      ) {
+        throw new ConflictException(
+          'Page content persistence was not verified',
+        );
+      }
+    } catch (err) {
+      const rollback = await this.pageRepo.updatePage(
+        {
+          workspaceId: page.workspaceId,
+          title: page.title,
+          icon: page.icon,
+          lastUpdatedById: page.lastUpdatedById,
+          updatedAt: page.updatedAt,
+          contributorIds: page.contributorIds,
+        },
+        page.id,
+        undefined,
+        { expectedUpdatedAt: updatedAt },
+      );
+
+      if (Number(rollback.numUpdatedRows) === 0) {
+        throw new ConflictException(
+          'Page update requires repair after a content persistence failure',
+        );
+      }
+      throw err;
+    }
 
     this.generalQueue
       .add(QueueJob.ADD_PAGE_WATCHERS, {
@@ -246,27 +343,7 @@ export class PageService {
         this.logger.warn(`Failed to queue add-page-watchers: ${err.message}`),
       );
 
-    if (
-      updatePageDto.content &&
-      updatePageDto.operation &&
-      updatePageDto.format
-    ) {
-      await this.updatePageContent(
-        page.id,
-        updatePageDto.content,
-        updatePageDto.operation,
-        updatePageDto.format,
-        user,
-      );
-    }
-
-    return await this.pageRepo.findById(page.id, {
-      includeSpace: true,
-      includeContent: true,
-      includeCreator: true,
-      includeLastUpdatedBy: true,
-      includeContributors: true,
-    });
+    return resolvedPage;
   }
 
   async updatePageContent(
@@ -275,15 +352,94 @@ export class PageService {
     operation: ContentOperation,
     format: ContentFormat,
     user: User,
+    preparedContent?: object,
   ): Promise<void> {
-    const prosemirrorJson = await this.parseProsemirrorContent(content, format);
+    const prosemirrorJson =
+      preparedContent ??
+      (await this.prepareProsemirrorContent(content, format));
 
     const documentName = `page.${pageId}`;
     await this.collaborationGateway.handleYjsEvent(
       'updatePageContent',
       documentName,
-      { operation, prosemirrorJson, user },
+      { operation, prosemirrorJson, user, strictPersistence: true },
     );
+  }
+
+  private hasExpectedContent(
+    currentContent: unknown,
+    storedContent: unknown,
+    preparedContent: object,
+    operation: ContentOperation,
+  ): boolean {
+    if (operation === 'replace') {
+      return isDeepStrictEqual(
+        this.normalizeProsemirrorContent(storedContent),
+        this.normalizeProsemirrorContent(preparedContent),
+      );
+    }
+
+    const current =
+      currentContent &&
+      typeof currentContent === 'object' &&
+      !Array.isArray(currentContent)
+        ? (currentContent as Record<string, unknown>)
+        : { type: 'doc', content: [] };
+    const prepared = preparedContent as Record<string, unknown>;
+    const currentNodes = Array.isArray(current.content) ? current.content : [];
+    const preparedNodes = Array.isArray(prepared.content)
+      ? prepared.content
+      : [];
+    const appended = {
+      ...current,
+      type: typeof current.type === 'string' ? current.type : 'doc',
+      content:
+        operation === 'prepend'
+          ? [...preparedNodes, ...currentNodes]
+          : [...currentNodes, ...preparedNodes],
+    };
+    return isDeepStrictEqual(
+      this.normalizeProsemirrorContent(storedContent),
+      this.normalizeProsemirrorContent(appended),
+    );
+  }
+
+  private normalizeProsemirrorContent(value: unknown): unknown {
+    if (Array.isArray(value)) {
+      return value.map((item) => this.normalizeProsemirrorContent(item));
+    }
+    if (!value || typeof value !== 'object') {
+      return value;
+    }
+
+    const normalized: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(
+      value as Record<string, unknown>,
+    )) {
+      if (child === null || typeof child === 'undefined') {
+        continue;
+      }
+
+      const normalizedChild = this.normalizeProsemirrorContent(child);
+      if (
+        ['content', 'marks'].includes(key) &&
+        Array.isArray(normalizedChild) &&
+        normalizedChild.length === 0
+      ) {
+        continue;
+      }
+      if (
+        key === 'attrs' &&
+        normalizedChild &&
+        typeof normalizedChild === 'object' &&
+        !Array.isArray(normalizedChild) &&
+        Object.keys(normalizedChild).length === 0
+      ) {
+        continue;
+      }
+      normalized[key] = normalizedChild;
+    }
+    return normalized;
   }
 
   async getSidebarPages(
@@ -1044,7 +1200,7 @@ export class PageService {
     await this.pageRepo.removePage(pageId, userId, workspaceId);
   }
 
-  private async parseProsemirrorContent(
+  async prepareProsemirrorContent(
     content: string | object,
     format: ContentFormat,
   ): Promise<any> {

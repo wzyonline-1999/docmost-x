@@ -26,6 +26,8 @@ import SpacesPage from "@/pages/spaces/spaces.tsx";
 import SpaceTrash from "@/pages/space/space-trash.tsx";
 import FavoritesPage from "@/pages/favorites/favorites-page";
 import LabelPage from "@/pages/label/label-page";
+import AdminRoute from "@/components/auth/admin-route";
+import McpSettings from "@/pages/settings/mcp/mcp-settings";
 
 export default function App() {
   useTrackOrigin();
@@ -58,10 +60,7 @@ export default function App() {
           <Route path={"/labels/:labelName"} element={<LabelPage />} />
           <Route path={"/s/:spaceSlug"} element={<SpaceHome />} />
           <Route path={"/s/:spaceSlug/trash"} element={<SpaceTrash />} />
-          <Route
-            path={"/s/:spaceSlug/p/:pageSlug"}
-            element={<Page />}
-          />
+          <Route path={"/s/:spaceSlug/p/:pageSlug"} element={<Page />} />
 
           <Route path={"/settings"}>
             <Route path={"account/profile"} element={<AccountSettings />} />
@@ -75,6 +74,9 @@ export default function App() {
             <Route path={"groups/:groupId"} element={<GroupInfo />} />
             <Route path={"spaces"} element={<Spaces />} />
             <Route path={"sharing"} element={<Shares />} />
+            <Route element={<AdminRoute />}>
+              <Route path={"mcp"} element={<McpSettings />} />
+            </Route>
           </Route>
         </Route>
 

@@ -162,9 +162,14 @@ export class PersistenceExtension implements Extension {
       });
     } catch (err) {
       this.logger.error(`Failed to update page ${pageId}`, err);
+      if (context?.strictPersistence) {
+        throw err;
+      }
     }
 
-    if (page) {
+    if (!page) return;
+
+    await this.runPostPersistenceEffect(pageId, 'broadcast', () =>
       document.broadcastStateless(
         JSON.stringify({
           type: 'page.updated',
@@ -178,28 +183,29 @@ export class PersistenceExtension implements Extension {
               }
             : undefined,
         }),
-      );
+      ),
+    );
 
-      await this.syncTransclusion(pageId, page.workspaceId, tiptapJson);
-    }
+    await this.syncTransclusion(pageId, page.workspaceId, tiptapJson);
 
-    if (page) {
-      await this.collabHistory.addContributors(pageId, editingUserIds);
+    await this.runPostPersistenceEffect(pageId, 'contributors', () =>
+      this.collabHistory.addContributors(pageId, editingUserIds),
+    );
 
+    await this.runPostPersistenceEffect(pageId, 'mentions', async () => {
       const mentions = extractMentions(tiptapJson);
-
       const userMentions = extractUserMentions(mentions);
       const oldMentions = page.content ? extractMentions(page.content) : [];
       const oldMentionedUserIds = extractUserMentions(oldMentions).map(
-        (m) => m.entityId,
+        (mention) => mention.entityId,
       );
 
       if (userMentions.length > 0) {
         await this.notificationQueue.add(QueueJob.PAGE_MENTION_NOTIFICATION, {
-          userMentions: userMentions.map((m) => ({
-            userId: m.entityId,
-            mentionId: m.id,
-            creatorId: m.creatorId,
+          userMentions: userMentions.map((mention) => ({
+            userId: mention.entityId,
+            mentionId: mention.id,
+            creatorId: mention.creatorId,
           })),
           oldMentionedUserIds,
           pageId,
@@ -207,14 +213,18 @@ export class PersistenceExtension implements Extension {
           workspaceId: page.workspaceId,
         } as IPageMentionNotificationJob);
       }
+    });
 
-      await this.aiQueue.add(QueueJob.PAGE_CONTENT_UPDATED, {
+    await this.runPostPersistenceEffect(pageId, 'ai_queue', () =>
+      this.aiQueue.add(QueueJob.PAGE_CONTENT_UPDATED, {
         pageIds: [pageId],
         workspaceId: page.workspaceId,
-      });
+      }),
+    );
 
-      await this.enqueuePageHistory(page);
-    }
+    await this.runPostPersistenceEffect(pageId, 'history_queue', () =>
+      this.enqueuePageHistory(page),
+    );
   }
 
   async onChange(data: onChangePayload) {
@@ -241,6 +251,23 @@ export class PersistenceExtension implements Extension {
     const userIds = [...contributorSet];
     this.contributors.delete(documentName);
     return userIds;
+  }
+
+  private async runPostPersistenceEffect(
+    pageId: string,
+    effect: string,
+    callback: () => void | Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await callback();
+    } catch (err) {
+      this.logger.error({
+        event: 'page.persistence.follow_up_failed',
+        pageId,
+        effect,
+        errorType: err instanceof Error ? err.name : typeof err,
+      });
+    }
   }
 
   private async enqueuePageHistory(page: Page): Promise<void> {
