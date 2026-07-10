@@ -1,15 +1,21 @@
 name: Build MCP release candidate image
 
 on:
+  push:
+    tags:
+      - "docmost-mcp-vector-v*"
   workflow_dispatch:
     inputs:
       image_tag:
         description: Local image tag stored in the artifact
         required: true
-        default: 0.1.0-rc.3
+        default: 0.1.0-rc.4
 
 permissions:
   contents: read
+
+env:
+  IMAGE_TAG: ${{ inputs.image_tag || github.ref_name }}
 
 concurrency:
   group: mcp-rc-image-${{ github.ref }}
@@ -30,7 +36,7 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
-          tags: docmost-x:${{ inputs.image_tag }}
+          tags: docmost-x:${{ env.IMAGE_TAG }}
           outputs: type=docker,dest=/tmp/docmost-x-amd64.tar
           cache-from: type=gha,scope=mcp-rc-amd64
           cache-to: type=gha,scope=mcp-rc-amd64,mode=max
@@ -43,7 +49,7 @@ jobs:
       - name: Upload image archive
         uses: actions/upload-artifact@v4
         with:
-          name: docmost-x-amd64-${{ inputs.image_tag }}
+          name: docmost-x-amd64-${{ env.IMAGE_TAG }}
           path: |
             /tmp/docmost-x-amd64.tar.gz
             /tmp/docmost-x-amd64.tar.gz.sha256
