@@ -1,5 +1,5 @@
 FROM node:22-slim AS base
-LABEL org.opencontainers.image.source="https://github.com/docmost/docmost"
+LABEL org.opencontainers.image.source="https://github.com/wzyonline-1999/docmost-x"
 
 RUN npm install -g pnpm@10.4.0
 
