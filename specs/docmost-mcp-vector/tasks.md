@@ -703,7 +703,7 @@ requires_manual_gate: true
 ```yaml
 task_id: T18
 title: 香港 VPS 灰度发布与逐空间放量
-status: pending
+status: in_progress
 owner: agent
 stream: release
 type: deployment
@@ -724,6 +724,16 @@ requires_manual_gate: true
 4. 观察至少 24 小时：错误率、p95、audit failure、queue backlog、provider failure、stale pages。
 5. 达标后逐空间授权；含密钥/凭证的空间默认永不授权。
 6. 出现隐私、审计或一致性异常时立即关闭 vector/MCP 开关，保留数据供排查。
+
+### Current Evidence (2026-07-11)
+
+- 香港 VPS 已部署不可变镜像 `docmost-mcp-vector-v0.1.0-rc.5`，生产备份、真实恢复演练和快速回滚文件均已验证。
+- 已完成双开关关闭的暗启动，随后仅启用 `MCP_ENABLED=true`；`VECTOR_SEARCH_ENABLED=false` 保持关闭。
+- 灰度客户端 `Codex Canary - General` 只授权空的私有 `General` 空间；允许关键词搜索、读取、创建、修改和追加，拒绝删除、恢复、语义搜索和索引。
+- 生产 HTTPS 回归通过搜索、读取、创建、修改、追加与幂等重放；删除权限以 not-found 方式隐藏资源存在性，语义搜索返回空结果，索引操作明确拒绝。
+- 隔离的 `codex-cli 0.144.0-alpha.4` 使用官方 ChatGPT 登录完成生产 `search_docs` 与 `get_page`，未加载自定义 provider 或其他 MCP。
+- 当前证据为 26 次 MCP 请求、0 次 Embedding 调用、0 个活动 vector chunk、0 个索引任务；Docmost `healthy`、重启次数 0，Nginx 正常。
+- 24 小时观察窗口和单空间 vector/semantic 灰度尚未完成，T18 不得提前标记为 completed。
 
 ### Done When
 
@@ -782,7 +792,7 @@ flowchart TD
 | Supabase 暴露面未确认        | T15           | anon/authenticated 拒绝 |
 | Docker/环境文档缺失          | T16           | 干净 clone 部署         |
 | 真实 Codex 未验收            | T17           | 实际客户端全流程        |
-| 香港 VPS 尚未灰度            | T18           | 24 小时观察与回滚       |
+| 香港 VPS 关键词灰度观察中    | T18           | 24 小时观察与向量灰度   |
 
 ## 7. 风险与阻断条件
 

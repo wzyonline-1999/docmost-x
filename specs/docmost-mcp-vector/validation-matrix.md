@@ -2,9 +2,9 @@
 spec_id: docmost-mcp-vector-validation
 title: Docmost MCP and Vector Search Validation Matrix
 doc_type: validation
-status: verified-local
+status: production-canary
 version: v1
-verified_at: 2026-07-10
+verified_at: 2026-07-11
 ---
 
 # MCP and Vector Validation Matrix
@@ -17,7 +17,9 @@ verified_at: 2026-07-10
 - Coverage gate: the seven core security services exceed 90% line and 80% branch coverage.
 - Repository hygiene: generated browser snapshots were removed and the high-entropy secret scan returned no matches.
 - Dark boot: the production build starts without embedding credentials when both feature flags are false, and `/mcp` rejects bearer requests as disabled.
-- Production deployment and the 24-hour observation window remain behind the T18 manual gate.
+- Production keyword canary: RC5 is healthy on the Hong Kong VPS with `MCP_ENABLED=true` and `VECTOR_SEARCH_ENABLED=false`; HTTPS CRUD, replay safety, deny-by-default behavior, metrics, and audit evidence passed on the empty private `General` space.
+- Production Codex: isolated `codex-cli 0.144.0-alpha.4` used official ChatGPT authentication and only the Docmost MCP to complete `search_docs` and `get_page` against the canary page.
+- T18 remains in progress: the 24-hour observation window and vector/semantic canary are not complete.
 
 ## Case Evidence
 
@@ -88,6 +90,9 @@ verified_at: 2026-07-10
 | G-63 | PASS   | Unit + production    | Write-path tests accept Yjs-normalized content, reject missing nodes, and isolate post-persistence side-effect failures.                  |
 | G-64 | PASS   | Unit + configuration | MCP and vector search default off; vector search activates only when both feature flags are explicitly true.                              |
 | G-65 | PASS   | Production boot      | With both feature flags false, health reports PostgreSQL/Redis up and bearer-authenticated MCP requests return `MCP is disabled`.         |
+| G-66 | PASS   | Production HTTPS     | Keyword search/read/create/update/append and idempotency replay passed through Nginx; delete, semantic, and index paths failed closed.    |
+| G-67 | PASS   | Production Codex     | Isolated `codex-cli 0.144.0-alpha.4` found and read the expected canary page through the public Streamable HTTP endpoint.                 |
+| G-68 | PASS   | Production isolation | Canary evidence shows 26 MCP requests, zero Embedding calls, zero active vector chunks, and zero vector jobs while vector stays disabled. |
 
 ## Repeatable Commands
 
