@@ -379,6 +379,42 @@ describe('McpAttachmentService', () => {
     });
   });
 
+  it('replays a completed idempotent deletion after attachment metadata is gone', async () => {
+    const harness = createHarness();
+    const replay = {
+      attachmentId: attachment.id,
+      deleted: true,
+      warnings: [],
+    };
+    harness.attachmentRepo.findById.mockResolvedValue(null);
+    harness.idempotencyService.run.mockResolvedValue(replay);
+
+    await expect(
+      harness.service.deleteAttachment(
+        {
+          attachmentId: attachment.id,
+          idempotencyKey: 'delete-replay',
+          confirm: true,
+        },
+        context,
+      ),
+    ).resolves.toEqual(replay);
+
+    expect(harness.idempotencyService.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'delete_attachment',
+        resourceId: attachment.id,
+        idempotencyKey: 'delete-replay',
+      }),
+    );
+    expect(
+      harness.attachmentService.deleteFileAttachment,
+    ).not.toHaveBeenCalled();
+    expect(
+      harness.permissionService.assertSpacePermission,
+    ).not.toHaveBeenCalled();
+  });
+
   it('reconciles completed, retryable, and cross-workspace attachment deletion', async () => {
     const harness = createHarness();
     await harness.service.deleteAttachment(

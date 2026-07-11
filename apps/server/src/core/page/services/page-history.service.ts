@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { PageHistoryRepo } from '@docmost/db/repos/page/page-history.repo';
-import { PageHistory } from '@docmost/db/types/entity.types';
+import { Page, PageHistory } from '@docmost/db/types/entity.types';
 import { PaginationOptions } from '@docmost/db/pagination/pagination-options';
 import { CursorPaginationResult } from '@docmost/db/pagination/cursor-pagination';
+import { isDeepStrictEqual } from 'node:util';
 
 @Injectable()
 export class PageHistoryService {
@@ -22,5 +23,28 @@ export class PageHistoryService {
       pageId,
       paginationOptions,
     );
+  }
+
+  async saveSnapshotIfChanged(
+    page: Page,
+    contributorIds: string[] = [],
+  ): Promise<boolean> {
+    const lastHistory = await this.pageHistoryRepo.findPageLastHistory(
+      page.id,
+      { includeContent: true },
+    );
+
+    if (
+      lastHistory &&
+      lastHistory.title === page.title &&
+      lastHistory.icon === page.icon &&
+      lastHistory.coverPhoto === page.coverPhoto &&
+      isDeepStrictEqual(lastHistory.content, page.content)
+    ) {
+      return false;
+    }
+
+    await this.pageHistoryRepo.saveHistory(page, { contributorIds });
+    return true;
   }
 }

@@ -71,7 +71,9 @@ describe('McpToolService', () => {
       (overrides.idempotencyService ?? null) as never,
       (overrides.pageRepo ?? null) as never,
       (overrides.pageService ?? null) as never,
-      (overrides.pageHistoryMcpService ?? null) as never,
+      (overrides.pageHistoryMcpService ?? {
+        capturePageSnapshot: jest.fn().mockResolvedValue([]),
+      }) as never,
       (overrides.permissionService ?? null) as never,
       (overrides.vectorIndexService ?? null) as never,
       (overrides.actorAccessService ?? null) as never,
@@ -612,12 +614,16 @@ describe('McpToolService', () => {
     const auditService = {
       tryLog: jest.fn().mockResolvedValue(false),
     };
+    const pageHistoryMcpService = {
+      capturePageSnapshot: jest.fn().mockResolvedValue([]),
+    };
     const service = createService({
       auditService,
       environmentService,
       idempotencyService,
       pageRepo,
       pageService,
+      pageHistoryMcpService,
       permissionService,
       actorAccessService,
     });
@@ -643,6 +649,10 @@ describe('McpToolService', () => {
       }),
       actor,
       { expectedUpdatedAt: new Date(expectedUpdatedAt) },
+    );
+    expect(pageHistoryMcpService.capturePageSnapshot).toHaveBeenCalledWith(
+      page,
+      actor.id,
     );
     expect(result.structuredContent).toMatchObject({
       page: { id: page.id, title: 'Atomic update' },
@@ -686,6 +696,9 @@ describe('McpToolService', () => {
           run({ checkpoint: jest.fn().mockResolvedValue(undefined) }),
         ),
     };
+    const pageHistoryMcpService = {
+      capturePageSnapshot: jest.fn().mockResolvedValue([]),
+    };
     const service = createService({
       auditService,
       actorAccessService,
@@ -694,6 +707,7 @@ describe('McpToolService', () => {
         getMcpMaxWriteContentLength: jest.fn(() => 1_000),
       },
       idempotencyService,
+      pageHistoryMcpService,
       pageService,
       permissionService,
     });
@@ -747,6 +761,10 @@ describe('McpToolService', () => {
         ipAddress: context.ipAddress,
       }),
     );
+    expect(pageHistoryMcpService.capturePageSnapshot).toHaveBeenCalledWith(
+      page,
+      actor.id,
+    );
     expect(JSON.stringify(auditService.tryLog.mock.calls)).not.toContain(
       'content-that-must-not-enter-audit',
     );
@@ -784,6 +802,9 @@ describe('McpToolService', () => {
           run({ checkpoint: jest.fn().mockResolvedValue(undefined) }),
         ),
     };
+    const pageHistoryMcpService = {
+      capturePageSnapshot: jest.fn().mockResolvedValue([]),
+    };
     const service = createService({
       auditService,
       actorAccessService,
@@ -791,6 +812,7 @@ describe('McpToolService', () => {
         getMcpMaxWriteContentLength: jest.fn(() => 1_000),
       },
       idempotencyService,
+      pageHistoryMcpService,
       pageRepo,
       pageService,
       permissionService,
@@ -832,6 +854,10 @@ describe('McpToolService', () => {
         },
       }),
     );
+    expect(pageHistoryMcpService.capturePageSnapshot).toHaveBeenCalledWith(
+      page,
+      actor.id,
+    );
     expect(JSON.stringify(auditService.tryLog.mock.calls)).not.toContain(
       'append-secret-body',
     );
@@ -861,10 +887,14 @@ describe('McpToolService', () => {
           run({ checkpoint: jest.fn().mockResolvedValue(undefined) }),
         ),
     };
+    const pageHistoryMcpService = {
+      capturePageSnapshot: jest.fn().mockResolvedValue([]),
+    };
     const service = createService({
       auditService,
       actorAccessService,
       idempotencyService,
+      pageHistoryMcpService,
       pageRepo,
       pageService,
       permissionService,
@@ -894,6 +924,10 @@ describe('McpToolService', () => {
     );
 
     expect(tryIndexPage).toHaveBeenCalledWith(context, page.id, 'delete');
+    expect(pageHistoryMcpService.capturePageSnapshot).toHaveBeenCalledWith(
+      page,
+      actor.id,
+    );
     expect(auditService.tryLog).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'mcp.page.delete',

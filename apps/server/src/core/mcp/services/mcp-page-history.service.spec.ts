@@ -58,6 +58,7 @@ describe('McpPageHistoryService', () => {
   const createHarness = () => {
     const pageHistoryService = {
       findById: jest.fn().mockResolvedValue(history),
+      saveSnapshotIfChanged: jest.fn().mockResolvedValue(true),
       findHistoryByPageId: jest.fn().mockResolvedValue({
         items: [history],
         meta: {
@@ -259,6 +260,9 @@ describe('McpPageHistoryService', () => {
         preparedContent: history.content,
       }),
     );
+    expect(
+      harness.pageHistoryService.saveSnapshotIfChanged,
+    ).toHaveBeenCalledWith(page, [actor.id]);
     expect(harness.auditService.tryLog).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'mcp.page.version.restore',
@@ -269,6 +273,60 @@ describe('McpPageHistoryService', () => {
     expect(result).toEqual(
       expect.objectContaining({ restoredHistoryId: history.id, warnings: [] }),
     );
+  });
+
+  it('returns a warning and still restores when the pre-restore snapshot fails', async () => {
+    const harness = createHarness();
+    harness.pageHistoryService.saveSnapshotIfChanged.mockRejectedValue(
+      new Error('database unavailable'),
+    );
+
+    await expect(
+      harness.service.restorePageVersion(
+        {
+          pageId: page.id,
+          historyId: history.id,
+          expectedUpdatedAt: page.updatedAt.toISOString(),
+          confirm: true,
+        },
+        context,
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        restoredHistoryId: history.id,
+        warnings: [
+          'MCP operation succeeded, but its page history snapshot could not be persisted',
+        ],
+      }),
+    );
+  });
+
+  it('does not create another snapshot when idempotency returns a cached restore', async () => {
+    const harness = createHarness();
+    const cached = {
+      page: { id: page.id },
+      restoredHistoryId: history.id,
+      warnings: [],
+    };
+    harness.idempotencyService.run.mockResolvedValue(cached);
+
+    await expect(
+      harness.service.restorePageVersion(
+        {
+          pageId: page.id,
+          historyId: history.id,
+          expectedUpdatedAt: page.updatedAt.toISOString(),
+          idempotencyKey: 'restore-cached',
+          confirm: true,
+        },
+        context,
+      ),
+    ).resolves.toEqual(cached);
+
+    expect(
+      harness.pageHistoryService.saveSnapshotIfChanged,
+    ).not.toHaveBeenCalled();
+    expect(harness.pageService.update).not.toHaveBeenCalled();
   });
 
   it('returns an audit warning and rejects an invalid concurrency timestamp', async () => {

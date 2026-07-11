@@ -207,6 +207,15 @@ export class McpAttachmentService {
         'confirm must be true to delete an attachment',
       );
     }
+    const existingAttachment = await this.attachmentRepo.findById(
+      input.attachmentId,
+    );
+    if (!existingAttachment && input.idempotencyKey) {
+      return this.replayDeletedAttachment(
+        { ...input, idempotencyKey: input.idempotencyKey },
+        context,
+      );
+    }
     const { attachment, page, actor } = await this.requireAttachment(
       input.attachmentId,
       context,
@@ -251,6 +260,30 @@ export class McpAttachmentService {
           deleted: true,
           warnings: auditPersisted ? [] : [AUDIT_PERSISTENCE_WARNING],
         };
+      },
+    });
+  }
+
+  private async replayDeletedAttachment(
+    input: {
+      attachmentId: string;
+      idempotencyKey: string;
+      confirm: boolean;
+    },
+    context: McpToolContext,
+  ) {
+    return this.idempotencyService.run({
+      client: context.client,
+      action: 'delete_attachment',
+      idempotencyKey: input.idempotencyKey,
+      request: input,
+      resourceType: 'attachment',
+      resourceId: input.attachmentId,
+      operationStage: 'validated',
+      targetState: { deleted: true },
+      reconcile: (record) => this.reconcileDelete(record, context),
+      run: async () => {
+        throw new NotFoundException('Attachment not found');
       },
     });
   }

@@ -1085,6 +1085,8 @@ export class McpToolService {
           });
           return createdPage;
         });
+        const historyWarnings =
+          await this.pageHistoryMcpService.capturePageSnapshot(page, actor.id);
         const indexAttempt = await this.tryIndexPage(context, page.id);
 
         const auditWarnings = await this.auditMutation({
@@ -1112,7 +1114,10 @@ export class McpToolService {
           stage: 'side_effects_complete',
           resourceId: page.id,
         });
-        return this.buildWriteResponse(page, indexAttempt, auditWarnings);
+        return this.buildWriteResponse(page, indexAttempt, [
+          ...historyWarnings,
+          ...auditWarnings,
+        ]);
       },
     });
   }
@@ -1173,6 +1178,8 @@ export class McpToolService {
       getResourceId: (response) => this.getResponsePageId(response),
       reconcile: (record) => this.reconcilePageWrite(context, record, 'page'),
       run: async (execution) => {
+        const historyWarnings =
+          await this.pageHistoryMcpService.capturePageSnapshot(page, actor.id);
         const updatedPage = await this.pageService.update(
           page,
           {
@@ -1223,11 +1230,10 @@ export class McpToolService {
           stage: 'side_effects_complete',
           resourceId: page.id,
         });
-        return this.buildWriteResponse(
-          updatedPage,
-          indexAttempt,
-          auditWarnings,
-        );
+        return this.buildWriteResponse(updatedPage, indexAttempt, [
+          ...historyWarnings,
+          ...auditWarnings,
+        ]);
       },
     });
   }
@@ -1275,6 +1281,8 @@ export class McpToolService {
       getResourceId: (response) => this.getResponsePageId(response),
       reconcile: (record) => this.reconcilePageWrite(context, record, 'page'),
       run: async (execution) => {
+        const historyWarnings =
+          await this.pageHistoryMcpService.capturePageSnapshot(page, actor.id);
         const updatedPage = await this.pageService.update(
           page,
           {
@@ -1314,11 +1322,10 @@ export class McpToolService {
           stage: 'side_effects_complete',
           resourceId: page.id,
         });
-        return this.buildWriteResponse(
-          updatedPage,
-          indexAttempt,
-          auditWarnings,
-        );
+        return this.buildWriteResponse(updatedPage, indexAttempt, [
+          ...historyWarnings,
+          ...auditWarnings,
+        ]);
       },
     });
   }
@@ -1358,6 +1365,8 @@ export class McpToolService {
           throw new NotFoundException('Page not found');
         }
 
+        const historyWarnings =
+          await this.pageHistoryMcpService.capturePageSnapshot(page, actor.id);
         await this.pageService.removePage(
           page.id,
           actor.id,
@@ -1402,7 +1411,11 @@ export class McpToolService {
           page: this.toPageMetadata({ ...page, deletedAt: new Date() }),
           index: indexAttempt.index,
           deleted: true,
-          warnings: [...indexAttempt.warnings, ...auditWarnings],
+          warnings: [
+            ...historyWarnings,
+            ...indexAttempt.warnings,
+            ...auditWarnings,
+          ],
         };
       },
     });

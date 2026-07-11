@@ -37,6 +37,8 @@ type VersionTarget = {
 const MAX_DIFF_LENGTH = 200_000;
 const AUDIT_PERSISTENCE_WARNING =
   'MCP operation succeeded, but its audit log could not be persisted';
+const HISTORY_PERSISTENCE_WARNING =
+  'MCP operation succeeded, but its page history snapshot could not be persisted';
 
 @Injectable()
 export class McpPageHistoryService {
@@ -49,6 +51,18 @@ export class McpPageHistoryService {
     private readonly auditService: McpAuditService,
     private readonly idempotencyService: McpIdempotencyService,
   ) {}
+
+  async capturePageSnapshot(
+    page: Page,
+    actorUserId: string,
+  ): Promise<string[]> {
+    try {
+      await this.pageHistoryService.saveSnapshotIfChanged(page, [actorUserId]);
+      return [];
+    } catch {
+      return [HISTORY_PERSISTENCE_WARNING];
+    }
+  }
 
   async listPageVersions(
     input: { pageId: string; limit: number; cursor?: string },
@@ -182,6 +196,7 @@ export class McpPageHistoryService {
       reconcile: (record) =>
         this.reconcileRestore(record, context.client.workspaceId),
       run: async (execution) => {
+        const historyWarnings = await this.capturePageSnapshot(page, actor.id);
         const restored = await this.pageService.update(
           page,
           {
@@ -228,11 +243,10 @@ export class McpPageHistoryService {
           ipAddress: context.ipAddress,
         });
 
-        return this.restoreResponse(
-          restored,
-          history.id,
-          auditPersisted ? [] : [AUDIT_PERSISTENCE_WARNING],
-        );
+        return this.restoreResponse(restored, history.id, [
+          ...historyWarnings,
+          ...(auditPersisted ? [] : [AUDIT_PERSISTENCE_WARNING]),
+        ]);
       },
     });
   }
