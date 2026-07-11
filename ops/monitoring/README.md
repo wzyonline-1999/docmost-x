@@ -1,8 +1,12 @@
 # Docmost MCP monitoring
 
 Prometheus scrapes `GET /api/mcp/metrics` with the bearer token configured in
-`MCP_METRICS_TOKEN`. Keep this endpoint behind the reverse proxy allowlist when
-possible; the application also rejects missing or invalid bearer tokens.
+`MCP_METRICS_TOKEN`. Keep this endpoint on a private network when possible; the
+application also rejects missing or invalid bearer tokens.
+
+Mount the token into Prometheus as a read-only credentials file. Do not place
+the token directly in `prometheus.yml`, and do not rely on environment variable
+expansion in that file.
 
 Example scrape job:
 
@@ -11,10 +15,15 @@ Example scrape job:
   metrics_path: /api/mcp/metrics
   authorization:
     type: Bearer
-    credentials: ${MCP_METRICS_TOKEN}
+    credentials_file: /run/secrets/docmost_mcp_metrics_token
   static_configs:
     - targets: [docmost:3000]
 ```
+
+The Prometheus process must be able to read the mounted file. For a container
+running as UID/GID `65534`, a root-owned file with group `65534` and mode `0640`
+keeps the credential unavailable to other host users while remaining readable
+inside the container.
 
 Load `mcp-alerts.yml` as a Prometheus rule file and import
 `grafana/docmost-mcp-dashboard.json` into Grafana. Alert thresholds are release
