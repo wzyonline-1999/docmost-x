@@ -17,12 +17,13 @@ verified_at: 2026-07-11
 - Coverage gate: the seven core security services exceed 90% line and 80% branch coverage.
 - Repository hygiene: generated browser snapshots were removed and the high-entropy secret scan returned no matches.
 - Dark boot: the production build starts without embedding credentials when both feature flags are false, and `/mcp` rejects bearer requests as disabled.
-- Production stable release: the Hong Kong VPS runs immutable image `docmost-mcp-vector-v0.2.0` with `MCP_ENABLED=true` and `VECTOR_SEARCH_ENABLED=false`; image digest `sha256:e7edb5d5d1324c09f6bf1dfb032b8b43a4cd1bca41c272b962799d846cb1d221` was loaded from the checksum-verified GitHub prerelease artifact built from commit `de76579`.
+- Production stable release: the Hong Kong VPS runs immutable image `docmost-mcp-vector-v0.2.1` with `MCP_ENABLED=true` and `VECTOR_SEARCH_ENABLED=false`; image digest `sha256:da60f4c297e7b136d7feaccd7951ae9f438564d5f77fa48b8c565320eb834067` was loaded from the checksum-verified GitHub prerelease artifact built from commit `eeeebf6`.
 - Production Codex: isolated `codex-cli 0.144.0-alpha.4` used official ChatGPT authentication and only the Docmost MCP to complete `search_docs` and `get_page` against the canary page.
 - Production observability: Prometheus scrapes the Token-protected endpoint over the private Docmost Docker network, all seven MCP alert rules are healthy and inactive, and Grafana provisions the `Docmost MCP` dashboard.
 - T18 is complete: the single-user owner explicitly selected direct stable release, and health, authenticated MCP initialize, monitoring, logs, and rollback evidence all passed. Vector enablement remains a separate provider-dependent follow-up.
 - MCP history and attachments: existing Docmost history, Attachment metadata, S3 storage, and extraction queues now back eight additional permission-scoped MCP tools without a schema migration.
 - Production history/attachment smoke: authenticated `tools/list` returned 27 tools and all eight new names; safe reads against an authorized page returned one version and an empty attachment list without exposing page or attachment content. The replacement container is healthy with zero restarts, no pending migrations, no recent error lines, and HTTP 200 from both local and public health endpoints.
+- Production write smoke: a disposable page completed create/update/version list/version read/diff/version restore, attachment upload/list/get/signed download/delete, page delete, and all idempotency replays. Database verification found all six idempotency actions completed, all seven expected audit events present, zero active smoke pages, and zero attachment residue.
 
 ## Case Evidence
 
@@ -106,6 +107,8 @@ verified_at: 2026-07-11
 | G-76 | PASS   | Attachment deletion  | Permanent deletion requires confirmation and update access, removes storage plus metadata, and audits without exposing signed URLs.       |
 | G-77 | PASS   | Attachment recovery  | Idempotent upload/delete reconciliation handles completion, retry, conflict, orphan cleanup, and stored-content hash validation.          |
 | G-78 | PASS   | Feature coverage     | New history/attachment MCP services have 96.4% line, 83.45% branch, and 100% function coverage.                                           |
+| G-79 | PASS   | History integration  | MCP writes capture deduplicated history snapshots; cached restore replays add no snapshot.                                                |
+| G-80 | PASS   | Production write     | The `v0.2.1` smoke passed nine checks with audit evidence and zero active page or attachment residue.                                     |
 
 ## Repeatable Commands
 
