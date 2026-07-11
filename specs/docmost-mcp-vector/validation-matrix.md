@@ -19,6 +19,7 @@ verified_at: 2026-07-11
 - Dark boot: the production build starts without embedding credentials when both feature flags are false, and `/mcp` rejects bearer requests as disabled.
 - Production keyword canary: RC5 is healthy on the Hong Kong VPS with `MCP_ENABLED=true` and `VECTOR_SEARCH_ENABLED=false`; HTTPS CRUD, replay safety, deny-by-default behavior, metrics, and audit evidence passed on the empty private `General` space.
 - Production Codex: isolated `codex-cli 0.144.0-alpha.4` used official ChatGPT authentication and only the Docmost MCP to complete `search_docs` and `get_page` against the canary page.
+- Production observability: Prometheus scrapes the Token-protected endpoint over the private Docmost Docker network, all seven MCP alert rules are healthy and inactive, and Grafana provisions the `Docmost MCP` dashboard.
 - T18 remains in progress: the 24-hour observation window and vector/semantic canary are not complete.
 
 ## Case Evidence
@@ -92,7 +93,8 @@ verified_at: 2026-07-11
 | G-65 | PASS   | Production boot      | With both feature flags false, health reports PostgreSQL/Redis up and bearer-authenticated MCP requests return `MCP is disabled`.         |
 | G-66 | PASS   | Production HTTPS     | Keyword search/read/create/update/append and idempotency replay passed through Nginx; delete, semantic, and index paths failed closed.    |
 | G-67 | PASS   | Production Codex     | Isolated `codex-cli 0.144.0-alpha.4` found and read the expected canary page through the public Streamable HTTP endpoint.                 |
-| G-68 | PASS   | Production isolation | Canary evidence shows 26 MCP requests, zero Embedding calls, zero active vector chunks, and zero vector jobs while vector stays disabled. |
+| G-68 | PASS   | Production isolation | Canary evidence shows 34 MCP requests, zero Embedding calls, zero active vector chunks, and zero vector jobs while vector stays disabled. |
+| G-69 | PASS   | Prod monitoring      | Private Prometheus scrape is up, all seven MCP alert rules are healthy and inactive, and Grafana provisions the MCP dashboard.            |
 
 ## Repeatable Commands
 

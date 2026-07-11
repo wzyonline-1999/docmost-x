@@ -732,8 +732,10 @@ requires_manual_gate: true
 - 灰度客户端 `Codex Canary - General` 只授权空的私有 `General` 空间；允许关键词搜索、读取、创建、修改和追加，拒绝删除、恢复、语义搜索和索引。
 - 生产 HTTPS 回归通过搜索、读取、创建、修改、追加与幂等重放；删除权限以 not-found 方式隐藏资源存在性，语义搜索返回空结果，索引操作明确拒绝。
 - 隔离的 `codex-cli 0.144.0-alpha.4` 使用官方 ChatGPT 登录完成生产 `search_docs` 与 `get_page`，未加载自定义 provider 或其他 MCP。
-- 当前证据为 26 次 MCP 请求、0 次 Embedding 调用、0 个活动 vector chunk、0 个索引任务；Docmost `healthy`、重启次数 0，Nginx 正常。
-- 24 小时观察窗口和单空间 vector/semantic 灰度尚未完成，T18 不得提前标记为 completed。
+- Prometheus 已通过 Docmost 私有 Docker 网络抓取受 Token 保护的指标，`up{job="docmost-mcp"}=1`；7 条 MCP 告警加载成功且均未触发，Grafana 已自动发现 `Docmost MCP` 看板。
+- 当前证据为 34 次 MCP 请求、0 次 Embedding 调用、0 个活动 vector chunk、0 个索引任务；Docmost `healthy`、重启次数 0，Nginx 正常。
+- Canary Token 已备份到 Vaultwarden 隐藏字段，本机运行时副本仅存于 macOS Keychain；VPS 临时 Token 文件已删除。
+- 关键词 Canary 的 24 小时观察窗口从 2026-07-11 10:35 CST 开始，最早于 2026-07-12 10:35 CST 判定；单空间 vector/semantic 灰度尚未开始，T18 不得提前标记为 completed。
 
 ### Done When
 
