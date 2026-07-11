@@ -2,7 +2,7 @@
 spec_id: docmost-mcp-vector-validation
 title: Docmost MCP and Vector Search Validation Matrix
 doc_type: validation
-status: production-canary
+status: production-stable
 version: v1
 verified_at: 2026-07-11
 ---
@@ -17,10 +17,10 @@ verified_at: 2026-07-11
 - Coverage gate: the seven core security services exceed 90% line and 80% branch coverage.
 - Repository hygiene: generated browser snapshots were removed and the high-entropy secret scan returned no matches.
 - Dark boot: the production build starts without embedding credentials when both feature flags are false, and `/mcp` rejects bearer requests as disabled.
-- Production keyword canary: RC5 is healthy on the Hong Kong VPS with `MCP_ENABLED=true` and `VECTOR_SEARCH_ENABLED=false`; HTTPS CRUD, replay safety, deny-by-default behavior, metrics, and audit evidence passed on the empty private `General` space.
+- Production stable release: the Hong Kong VPS runs immutable image `docmost-mcp-vector-v0.1.0` with `MCP_ENABLED=true` and `VECTOR_SEARCH_ENABLED=false`; its digest is identical to the validated RC5 image.
 - Production Codex: isolated `codex-cli 0.144.0-alpha.4` used official ChatGPT authentication and only the Docmost MCP to complete `search_docs` and `get_page` against the canary page.
 - Production observability: Prometheus scrapes the Token-protected endpoint over the private Docmost Docker network, all seven MCP alert rules are healthy and inactive, and Grafana provisions the `Docmost MCP` dashboard.
-- T18 remains in progress: the 24-hour observation window and vector/semantic canary are not complete.
+- T18 is complete: the single-user owner explicitly selected direct stable release, and health, authenticated MCP initialize, monitoring, logs, and rollback evidence all passed. Vector enablement remains a separate provider-dependent follow-up.
 
 ## Case Evidence
 
@@ -95,6 +95,7 @@ verified_at: 2026-07-11
 | G-67 | PASS   | Production Codex     | Isolated `codex-cli 0.144.0-alpha.4` found and read the expected canary page through the public Streamable HTTP endpoint.                 |
 | G-68 | PASS   | Production isolation | Canary evidence shows 34 MCP requests, zero Embedding calls, zero active vector chunks, and zero vector jobs while vector stays disabled. |
 | G-69 | PASS   | Prod monitoring      | Private Prometheus scrape is up, all seven MCP alert rules are healthy and inactive, and Grafana provisions the MCP dashboard.            |
+| G-70 | PASS   | Stable release       | Stable and RC5 tags resolve to one image digest; Docmost is healthy with no migrations, and authenticated MCP initialize returns 200.     |
 
 ## Repeatable Commands
 

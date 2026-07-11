@@ -702,8 +702,8 @@ requires_manual_gate: true
 
 ```yaml
 task_id: T18
-title: 香港 VPS 灰度发布与逐空间放量
-status: in_progress
+title: 香港 VPS 单用户稳定版发布
+status: completed
 owner: agent
 stream: release
 type: deployment
@@ -714,32 +714,32 @@ requires_manual_gate: true
 
 ### Goal
 
-以最小真实数据范围上线，并能够快速停止 MCP 或向量功能。
+在单用户环境以固定稳定镜像替换官方 Docmost 容器，同时保留快速停止功能和镜像回滚能力。
 
 ### Steps
 
-1. 备份数据库并先部署 `MCP_ENABLED=false`、`VECTOR_SEARCH_ENABLED=false`。
-2. 执行迁移和健康检查，再仅启用 MCP 关键词路径。
-3. 对一个无敏感内容的测试空间启用 index/semantic 权限。
-4. 观察至少 24 小时：错误率、p95、audit failure、queue backlog、provider failure、stale pages。
-5. 达标后逐空间授权；含密钥/凭证的空间默认永不授权。
-6. 出现隐私、审计或一致性异常时立即关闭 vector/MCP 开关，保留数据供排查。
+1. 备份现有 Compose 和数据库恢复资料，确认快速回滚路径。
+2. 将已验证 RC 镜像按相同 digest 提升为不可变稳定标签，并只重建 Docmost 服务。
+3. 直接启用 MCP 关键词路径；单用户通过空间权限控制可访问内容。
+4. 在独立 Embedding 提供方就绪前保持 `VECTOR_SEARCH_ENABLED=false`。
+5. 验证健康检查、HTTPS、authenticated MCP initialize、Prometheus 抓取、告警和启动日志。
+6. 出现隐私、审计或一致性异常时立即关闭 vector/MCP 开关，或恢复前一个镜像标签。
 
 ### Current Evidence (2026-07-11)
 
-- 香港 VPS 已部署不可变镜像 `docmost-mcp-vector-v0.1.0-rc.5`，生产备份、真实恢复演练和快速回滚文件均已验证。
-- 已完成双开关关闭的暗启动，随后仅启用 `MCP_ENABLED=true`；`VECTOR_SEARCH_ENABLED=false` 保持关闭。
-- 灰度客户端 `Codex Canary - General` 只授权空的私有 `General` 空间；允许关键词搜索、读取、创建、修改和追加，拒绝删除、恢复、语义搜索和索引。
-- 生产 HTTPS 回归通过搜索、读取、创建、修改、追加与幂等重放；删除权限以 not-found 方式隐藏资源存在性，语义搜索返回空结果，索引操作明确拒绝。
-- 隔离的 `codex-cli 0.144.0-alpha.4` 使用官方 ChatGPT 登录完成生产 `search_docs` 与 `get_page`，未加载自定义 provider 或其他 MCP。
-- Prometheus 已通过 Docmost 私有 Docker 网络抓取受 Token 保护的指标，`up{job="docmost-mcp"}=1`；7 条 MCP 告警加载成功且均未触发，Grafana 已自动发现 `Docmost MCP` 看板。
-- 当前证据为 34 次 MCP 请求、0 次 Embedding 调用、0 个活动 vector chunk、0 个索引任务；Docmost `healthy`、重启次数 0，Nginx 正常。
-- Canary Token 已备份到 Vaultwarden 隐藏字段，本机运行时副本仅存于 macOS Keychain；VPS 临时 Token 文件已删除。
-- 关键词 Canary 的 24 小时观察窗口从 2026-07-11 10:35 CST 开始，最早于 2026-07-12 10:35 CST 判定；单空间 vector/semantic 灰度尚未开始，T18 不得提前标记为 completed。
+- 产品所有者确认该实例仅供个人使用，明确取消分阶段灰度并授权直接稳定发布。
+- 香港 VPS 运行固定标签 `docmost-mcp-vector-v0.1.0`，镜像 digest 与已验证 RC5 完全相同：`sha256:5752a8540e27b842098d095463edb2245f9e461fda4bfd89d14c5d0750256346`。
+- Compose 已切换稳定标签并只重建 Docmost；容器 `healthy`、重启次数 0、无待执行迁移，数据库、Redis、Nginx 和监控栈未重启。
+- `MCP_ENABLED=true`、`VECTOR_SEARCH_ENABLED=false`；HTTPS 健康检查和 authenticated MCP initialize 均返回 200。
+- 生产关键词路径此前已通过搜索、读取、创建、修改、追加、幂等重放、权限隐藏与真实 Codex 验收。
+- Prometheus 通过 Docmost 私有 Docker 网络持续报告 `up{job="docmost-mcp"}=1`；7 条告警健康且未触发，Grafana 已加载 `Docmost MCP` 看板。
+- MCP Token 已备份到 Vaultwarden 隐藏字段，本机运行时副本仅存于 macOS Keychain；VPS 临时 Token 文件已删除。
+- VPS 当前仅保留自定义稳定标签和同 digest 的 RC 回滚别名，不存在旧官方 Docmost 镜像。
+- 向量代码随稳定镜像发布，但向量开关保持关闭；选择独立的非 Sub2 Embedding 提供方后再单独执行启用验收，不阻断本次稳定发布。
 
 ### Done When
 
-- 观察窗口内无 P0/P1 异常，回滚演练成功，生产权限清单经人工确认。
+- 固定稳定镜像健康运行，HTTPS/MCP/监控验证通过，回滚文件可用，生产发布经所有者确认。
 
 ## 5. 依赖关系
 
@@ -794,7 +794,7 @@ flowchart TD
 | Supabase 暴露面未确认        | T15           | anon/authenticated 拒绝 |
 | Docker/环境文档缺失          | T16           | 干净 clone 部署         |
 | 真实 Codex 未验收            | T17           | 实际客户端全流程        |
-| 香港 VPS 关键词灰度观察中    | T18           | 24 小时观察与向量灰度   |
+| 香港 VPS 单用户稳定版发布    | T18           | 固定镜像、冒烟与回滚    |
 
 ## 7. 风险与阻断条件
 
