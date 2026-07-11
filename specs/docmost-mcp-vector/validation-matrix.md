@@ -21,6 +21,7 @@ verified_at: 2026-07-11
 - Production Codex: isolated `codex-cli 0.144.0-alpha.4` used official ChatGPT authentication and only the Docmost MCP to complete `search_docs` and `get_page` against the canary page.
 - Production observability: Prometheus scrapes the Token-protected endpoint over the private Docmost Docker network, all seven MCP alert rules are healthy and inactive, and Grafana provisions the `Docmost MCP` dashboard.
 - T18 is complete: the single-user owner explicitly selected direct stable release, and health, authenticated MCP initialize, monitoring, logs, and rollback evidence all passed. Vector enablement remains a separate provider-dependent follow-up.
+- MCP history and attachments: existing Docmost history, Attachment metadata, S3 storage, and extraction queues now back eight additional permission-scoped MCP tools without a schema migration.
 
 ## Case Evidence
 
@@ -96,6 +97,14 @@ verified_at: 2026-07-11
 | G-68 | PASS   | Production isolation | Canary evidence shows 34 MCP requests, zero Embedding calls, zero active vector chunks, and zero vector jobs while vector stays disabled. |
 | G-69 | PASS   | Prod monitoring      | Private Prometheus scrape is up, all seven MCP alert rules are healthy and inactive, and Grafana provisions the MCP dashboard.            |
 | G-70 | PASS   | Stable release       | Stable and RC5 tags resolve to one image digest; Docmost is healthy with no migrations, and authenticated MCP initialize returns 200.     |
+| G-71 | PASS   | History security     | History list/read/diff mask cross-workspace and cross-page resources and require both MCP and actor read access.                          |
+| G-72 | PASS   | History mutation     | Version restore requires confirmation, update permission, actor edit access, optimistic locking, idempotency, and dedicated audit.        |
+| G-73 | PASS   | History output       | Markdown/HTML/JSON reads, current/saved diffs, and explicit 200,000-character diff truncation are covered.                                |
+| G-74 | PASS   | Attachment security  | List/get expose no storage path; cross-workspace access is masked and signed URL/read audit failures degrade safely.                      |
+| G-75 | PASS   | Attachment upload    | Strict Base64 and 512 KiB limits precede storage writes; metadata failure cleans storage and extraction queue failure preserves the file. |
+| G-76 | PASS   | Attachment deletion  | Permanent deletion requires confirmation and update access, removes storage plus metadata, and audits without exposing signed URLs.       |
+| G-77 | PASS   | Attachment recovery  | Idempotent upload/delete reconciliation handles completion, retry, conflict, orphan cleanup, and stored-content hash validation.          |
+| G-78 | PASS   | Feature coverage     | New history/attachment MCP services have 96.4% line, 83.45% branch, and 100% function coverage.                                           |
 
 ## Repeatable Commands
 

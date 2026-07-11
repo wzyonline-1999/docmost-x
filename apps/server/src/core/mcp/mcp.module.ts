@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { AttachmentModule } from '../attachment/attachment.module';
 import { PageModule } from '../page/page.module';
+import { StorageModule } from '../../integrations/storage/storage.module';
 import { McpAdminController } from './mcp-admin.controller';
 import { McpController } from './mcp.controller';
 import { McpAdminService } from './services/mcp-admin.service';
@@ -18,17 +20,21 @@ import { McpVectorEligibilityService } from './services/mcp-vector-eligibility.s
 import { McpVectorIndexProcessor } from './processors/mcp-vector-index.processor';
 import { McpMetricsController } from './mcp-metrics.controller';
 import { McpMetricsService } from './services/mcp-metrics.service';
+import { McpPageHistoryService } from './services/mcp-page-history.service';
+import { McpAttachmentService } from './services/mcp-attachment.service';
 
 @Module({
-  imports: [PageModule],
+  imports: [AttachmentModule, PageModule, StorageModule],
   controllers: [McpController, McpAdminController, McpMetricsController],
   providers: [
     McpAdminService,
+    McpAttachmentService,
     McpActorAccessService,
     McpAuditService,
     McpEmbeddingService,
     McpIdempotencyService,
     McpMetricsService,
+    McpPageHistoryService,
     McpPermissionService,
     McpRateLimitService,
     McpToolService,
@@ -41,11 +47,13 @@ import { McpMetricsService } from './services/mcp-metrics.service';
   ],
   exports: [
     McpAdminService,
+    McpAttachmentService,
     McpActorAccessService,
     McpAuditService,
     McpEmbeddingService,
     McpIdempotencyService,
     McpMetricsService,
+    McpPageHistoryService,
     McpPermissionService,
     McpRateLimitService,
     McpToolService,

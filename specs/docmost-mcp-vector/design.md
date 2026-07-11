@@ -726,6 +726,14 @@ Indexes:
 | `list_spaces`          | Any permission in returned spaces    | List spaces visible to token       |
 | `list_pages`           | `read` or `search`                   | List pages in allowed space        |
 | `get_page`             | `read`                               | Read one page                      |
+| `list_page_versions`   | `read`                               | List saved page versions           |
+| `get_page_version`     | `read`                               | Read one saved version             |
+| `diff_page_versions`   | `read`                               | Diff saved/current versions        |
+| `restore_page_version` | `update`                             | Confirmed optimistic restore       |
+| `list_attachments`     | `read`                               | List page file attachments         |
+| `get_attachment`       | `read`                               | Signed download and extracted text |
+| `upload_attachment`    | `update`                             | Upload a small Base64 attachment   |
+| `delete_attachment`    | `update`                             | Confirmed permanent file deletion  |
 | `search_docs`          | `search`; `semantic_search` optional | Hybrid search                      |
 | `semantic_search_docs` | `semantic_search`                    | Vector-only search                 |
 | `create_page`          | `create`                             | Create page                        |

@@ -741,6 +741,65 @@ requires_manual_gate: true
 
 - 固定稳定镜像健康运行，HTTPS/MCP/监控验证通过，回滚文件可用，生产发布经所有者确认。
 
+## Task T19
+
+```yaml
+task_id: T19
+title: 页面版本历史 MCP
+status: completed
+owner: agent
+stream: mcp
+type: backend
+priority: P0
+depends_on: [T18]
+requires_manual_gate: false
+```
+
+### Goal
+
+让 MCP 在现有 Docmost 页面历史上安全地列表、读取、比较和恢复版本，不绕过页面权限、乐观锁、幂等或审计。
+
+### Evidence (2026-07-11)
+
+- 新增 `list_page_versions`、`get_page_version`、`diff_page_versions`、`restore_page_version`。
+- 历史读取要求 MCP `read` 权限和 actor 页面可见性；跨工作区、跨页面历史统一返回 not found。
+- 恢复要求 MCP `update` 权限、actor 编辑权限、`confirm=true` 和 `expectedUpdatedAt`，并复用官方页面更新/Yjs 持久化链路。
+- 恢复写入具备幂等对账和独立 `mcp.page.version.restore` 审计事件；diff 超过 200,000 字符时显式截断。
+
+### Done When
+
+- 权限隐藏、三种读取格式、双版本 diff、长 diff 截断、并发恢复、审计降级和幂等对账测试通过。
+
+## Task T20
+
+```yaml
+task_id: T20
+title: 页面附件 MCP
+status: completed
+owner: agent
+stream: mcp
+type: backend
+priority: P0
+depends_on: [T19]
+requires_manual_gate: false
+```
+
+### Goal
+
+让 MCP 在页面权限范围内列出、读取、上传和删除附件，并复用官方 S3 存储、元数据表和内容提取队列。
+
+### Evidence (2026-07-11)
+
+- 新增 `list_attachments`、`get_attachment`、`upload_attachment`、`delete_attachment`。
+- 读取返回元数据、最长一小时的签名下载 URL 和可选的 PDF/DOCX 提取文本，不暴露内部存储路径。
+- 首版 JSON 上传使用严格 Base64 校验并限制为 512 KiB；大文件预签名 PUT 留作后续任务。
+- 上传和删除复用 MCP `update` 权限、actor 页面编辑权限、幂等对账和独立审计；删除必须 `confirm=true`。
+- 元数据写入失败会删除已上传对象；队列故障不会误删已持久化附件；崩溃对账会清理孤儿对象并验证存储内容哈希。
+
+### Done When
+
+- 跨工作区隐藏、签名 URL 降级、提取文本截断、Base64/大小限制、上传清理、确认删除和三态对账测试通过。
+
 ## 5. 依赖关系
 
 ```mermaid
@@ -765,7 +824,7 @@ flowchart TD
   T10 --> T14
   T11 --> T14
   T12 --> T14
-  T14 --> T15 --> T16 --> T17 --> T18
+  T14 --> T15 --> T16 --> T17 --> T18 --> T19 --> T20
 ```
 
 可并行执行：
@@ -795,6 +854,8 @@ flowchart TD
 | Docker/环境文档缺失          | T16           | 干净 clone 部署         |
 | 真实 Codex 未验收            | T17           | 实际客户端全流程        |
 | 香港 VPS 单用户稳定版发布    | T18           | 固定镜像、冒烟与回滚    |
+| MCP 无法访问页面历史         | T19           | 读取、diff、并发恢复    |
+| MCP 无法管理页面附件         | T20           | 签名下载、上传与删除    |
 
 ## 7. 风险与阻断条件
 

@@ -27,6 +27,8 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import { Queue } from 'bullmq';
 import { createByteCountingStream } from '../../../common/helpers/utils';
+import { getMimeType, sanitizeFileName } from '../../../common/helpers';
+import * as path from 'path';
 
 @Injectable()
 export class AttachmentService {
@@ -116,28 +118,101 @@ export class AttachmentService {
         });
       }
 
-      // Only index PDFs and DOCX files
-      if (['.pdf', '.docx'].includes(attachment.fileExt.toLowerCase())) {
-        await this.attachmentQueue.add(
-          QueueJob.ATTACHMENT_INDEX_CONTENT,
-          {
-            attachmentId: attachmentId,
-          },
-          {
-            attempts: 2,
-            backoff: {
-              type: 'exponential',
-              delay: 10000,
-            },
-          },
-        );
-      }
+      await this.queueContentIndex(attachment);
     } catch (err) {
       // delete uploaded file on error
       this.logger.error(err);
     }
 
     return attachment;
+  }
+
+  async uploadBufferFile(opts: {
+    buffer: Buffer;
+    fileName: string;
+    pageId: string;
+    userId: string;
+    spaceId: string;
+    workspaceId: string;
+    attachmentId?: string;
+  }): Promise<Attachment> {
+    if (!opts.buffer.length) {
+      throw new BadRequestException('Attachment content is empty');
+    }
+
+    const fileName = sanitizeFileName(opts.fileName).slice(0, 255);
+    const fileExtension = path.extname(fileName).toLowerCase();
+    if (!fileName || !fileExtension) {
+      throw new BadRequestException('Attachment file name is invalid');
+    }
+
+    const attachmentId = opts.attachmentId ?? uuid7();
+    const filePath = `${getAttachmentFolderPath(AttachmentType.File, opts.workspaceId)}/${attachmentId}/${fileName}`;
+    const preparedFile: PreparedFile = {
+      buffer: opts.buffer,
+      fileName,
+      fileSize: opts.buffer.length,
+      fileExtension,
+      mimeType: getMimeType(fileName),
+    };
+
+    await this.uploadToDrive(filePath, opts.buffer);
+
+    let attachment: Attachment;
+    try {
+      attachment = await this.saveAttachment({
+        attachmentId,
+        preparedFile,
+        filePath,
+        type: AttachmentType.File,
+        userId: opts.userId,
+        spaceId: opts.spaceId,
+        workspaceId: opts.workspaceId,
+        pageId: opts.pageId,
+      });
+    } catch (err) {
+      await this.storageService
+        .delete(filePath)
+        .catch((cleanupError) =>
+          this.logger.error(
+            'Failed to clean up MCP attachment upload',
+            cleanupError,
+          ),
+        );
+      throw err;
+    }
+
+    await this.queueContentIndex(attachment).catch((err) =>
+      this.logger.warn(
+        `Failed to queue attachment content indexing for ${attachment.id}: ${err.message}`,
+      ),
+    );
+    return attachment;
+  }
+
+  async deleteFileAttachment(attachment: Attachment): Promise<void> {
+    if (attachment.type !== AttachmentType.File) {
+      throw new BadRequestException('Attachment is not a page file');
+    }
+    await this.storageService.delete(attachment.filePath);
+    await this.attachmentRepo.deleteAttachmentById(attachment.id);
+  }
+
+  private async queueContentIndex(attachment: Attachment): Promise<void> {
+    if (!['.pdf', '.docx'].includes(attachment.fileExt.toLowerCase())) {
+      return;
+    }
+    await this.attachmentQueue.add(
+      QueueJob.ATTACHMENT_INDEX_CONTENT,
+      { attachmentId: attachment.id },
+      {
+        attempts: 2,
+        backoff: {
+          type: 'exponential',
+          delay: 10000,
+        },
+      },
+    );
   }
 
   async uploadImage(

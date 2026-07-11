@@ -89,6 +89,24 @@ export class AttachmentRepo {
       .execute();
   }
 
+  async findPageFiles(
+    pageId: string,
+    workspaceId: string,
+    opts: { limit: number; offset: number },
+  ): Promise<Attachment[]> {
+    return this.db
+      .selectFrom('attachments')
+      .select(this.baseFields)
+      .where('pageId', '=', pageId)
+      .where('workspaceId', '=', workspaceId)
+      .where('type', '=', AttachmentType.File)
+      .where('deletedAt', 'is', null)
+      .orderBy('createdAt', 'desc')
+      .limit(opts.limit)
+      .offset(opts.offset)
+      .execute();
+  }
+
   async findByIds(
     ids: string[],
     opts?: {

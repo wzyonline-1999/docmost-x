@@ -33,6 +33,8 @@ import { McpVectorIndexService } from './mcp-vector-index.service';
 import { formatPgVector } from '../utils/mcp-vector-sql.util';
 import { getMcpSafeErrorMessage } from '../utils/mcp-error.util';
 import { McpActorAccessService } from './mcp-actor-access.service';
+import { McpAttachmentService } from './mcp-attachment.service';
+import { McpPageHistoryService } from './mcp-page-history.service';
 import type { McpAuditLogInput } from '../types/mcp.types';
 import {
   McpToolCallParams,
@@ -114,11 +116,13 @@ export class McpToolService {
   constructor(
     @InjectKysely() private readonly db: KyselyDB,
     private readonly auditService: McpAuditService,
+    private readonly attachmentMcpService: McpAttachmentService,
     private readonly embeddingService: McpEmbeddingService,
     private readonly environmentService: EnvironmentService,
     private readonly idempotencyService: McpIdempotencyService,
     private readonly pageRepo: PageRepo,
     private readonly pageService: PageService,
+    private readonly pageHistoryMcpService: McpPageHistoryService,
     private readonly permissionService: McpPermissionService,
     private readonly vectorIndexService: McpVectorIndexService,
     private readonly actorAccessService: McpActorAccessService,
@@ -160,6 +164,129 @@ export class McpToolService {
             slugId: { type: 'string' },
             format: { type: 'string', enum: ['markdown', 'html', 'json'] },
           },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: 'list_page_versions',
+        description: 'List saved versions for one readable Docmost page.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            pageId: { type: 'string' },
+            limit: { type: 'number', minimum: 1, maximum: MAX_LIST_LIMIT },
+            cursor: { type: 'string' },
+          },
+          required: ['pageId'],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: 'get_page_version',
+        description: 'Read one saved page version.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            historyId: { type: 'string' },
+            format: { type: 'string', enum: ['markdown', 'html', 'json'] },
+          },
+          required: ['historyId'],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: 'diff_page_versions',
+        description:
+          'Create a unified markdown diff between two saved versions, or a saved version and the current page.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            pageId: { type: 'string' },
+            fromHistoryId: { type: 'string' },
+            toHistoryId: { type: 'string' },
+          },
+          required: ['pageId', 'fromHistoryId'],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: 'restore_page_version',
+        description:
+          'Restore a saved title and page body with optimistic concurrency protection.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            pageId: { type: 'string' },
+            historyId: { type: 'string' },
+            expectedUpdatedAt: { type: 'string' },
+            idempotencyKey: { type: 'string' },
+            confirm: { type: 'boolean' },
+          },
+          required: ['pageId', 'historyId', 'expectedUpdatedAt', 'confirm'],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: 'list_attachments',
+        description: 'List file attachments belonging to one readable page.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            pageId: { type: 'string' },
+            limit: { type: 'number', minimum: 1, maximum: MAX_LIST_LIMIT },
+            offset: { type: 'number', minimum: 0 },
+          },
+          required: ['pageId'],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: 'get_attachment',
+        description:
+          'Get attachment metadata, an expiring signed download URL, and optional extracted text.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            attachmentId: { type: 'string' },
+            expiresInSeconds: {
+              type: 'number',
+              minimum: 60,
+              maximum: 3600,
+            },
+            includeExtractedText: { type: 'boolean' },
+          },
+          required: ['attachmentId'],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: 'upload_attachment',
+        description:
+          'Upload a base64-encoded page attachment up to 512 KiB. Large-file upload URLs are not yet supported.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            pageId: { type: 'string' },
+            fileName: { type: 'string' },
+            contentBase64: { type: 'string' },
+            idempotencyKey: { type: 'string' },
+          },
+          required: ['pageId', 'fileName', 'contentBase64'],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: 'delete_attachment',
+        description:
+          'Permanently delete one page attachment from storage and metadata.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            attachmentId: { type: 'string' },
+            idempotencyKey: { type: 'string' },
+            confirm: { type: 'boolean' },
+          },
+          required: ['attachmentId', 'confirm'],
           additionalProperties: false,
         },
       },
@@ -434,6 +561,10 @@ export class McpToolService {
           typeof args.pageId === 'string' ? args.pageId : undefined;
         const spaceId =
           typeof args.spaceId === 'string' ? args.spaceId : undefined;
+        const attachmentId =
+          typeof args.attachmentId === 'string' ? args.attachmentId : undefined;
+        const historyId =
+          typeof args.historyId === 'string' ? args.historyId : undefined;
         await this.auditService.logPermissionDenied({
           workspaceId: context.client.workspaceId,
           clientId: context.client.id,
@@ -441,8 +572,16 @@ export class McpToolService {
           toolName: params.name,
           action: params.name,
           spaceId,
-          resourceType: pageId ? 'page' : spaceId ? 'space' : 'permission',
-          resourceId: pageId ?? spaceId,
+          resourceType: attachmentId
+            ? 'attachment'
+            : historyId
+              ? 'page_history'
+              : pageId
+                ? 'page'
+                : spaceId
+                  ? 'space'
+                  : 'permission',
+          resourceId: attachmentId ?? historyId ?? pageId ?? spaceId,
           requestId: context.requestId,
           ipAddress: context.ipAddress,
         });
@@ -451,7 +590,7 @@ export class McpToolService {
           clientId: context.client.id,
           workspaceId: context.client.workspaceId,
           toolName: params.name,
-          resourceId: pageId ?? spaceId ?? null,
+          resourceId: attachmentId ?? historyId ?? pageId ?? spaceId ?? null,
           event: 'mcp.permission.denied',
         });
       }
@@ -482,6 +621,94 @@ export class McpToolService {
         return this.listPages(args, context);
       case 'get_page':
         return this.getPage(args, context);
+      case 'list_page_versions':
+        return this.pageHistoryMcpService.listPageVersions(
+          {
+            pageId: this.requireString(args, 'pageId'),
+            limit: this.getLimit(args, MAX_LIST_LIMIT, 25),
+            cursor: this.optionalString(args, 'cursor') ?? undefined,
+          },
+          context,
+        );
+      case 'get_page_version':
+        return this.pageHistoryMcpService.getPageVersion(
+          {
+            historyId: this.requireString(args, 'historyId'),
+            format: this.getContentFormat(args, 'markdown'),
+          },
+          context,
+        );
+      case 'diff_page_versions':
+        return this.pageHistoryMcpService.diffPageVersions(
+          {
+            pageId: this.requireString(args, 'pageId'),
+            fromHistoryId: this.requireString(args, 'fromHistoryId'),
+            toHistoryId: this.optionalString(args, 'toHistoryId') ?? undefined,
+          },
+          context,
+        );
+      case 'restore_page_version':
+        this.requireConfirmation(args, 'restore_page_version');
+        return this.pageHistoryMcpService.restorePageVersion(
+          {
+            pageId: this.requireString(args, 'pageId'),
+            historyId: this.requireString(args, 'historyId'),
+            expectedUpdatedAt: this.requireString(args, 'expectedUpdatedAt'),
+            idempotencyKey:
+              this.optionalString(args, 'idempotencyKey') ?? undefined,
+            confirm: true,
+          },
+          context,
+        );
+      case 'list_attachments':
+        return this.attachmentMcpService.listAttachments(
+          {
+            pageId: this.requireString(args, 'pageId'),
+            limit: this.getLimit(args, MAX_LIST_LIMIT, 25),
+            offset: this.getOffset(args),
+          },
+          context,
+        );
+      case 'get_attachment':
+        return this.attachmentMcpService.getAttachment(
+          {
+            attachmentId: this.requireString(args, 'attachmentId'),
+            expiresInSeconds: this.getNamedLimit(
+              args,
+              'expiresInSeconds',
+              3600,
+              900,
+            ),
+            includeExtractedText: this.optionalBoolean(
+              args,
+              'includeExtractedText',
+              false,
+            ),
+          },
+          context,
+        );
+      case 'upload_attachment':
+        return this.attachmentMcpService.uploadAttachment(
+          {
+            pageId: this.requireString(args, 'pageId'),
+            fileName: this.requireString(args, 'fileName'),
+            contentBase64: this.requireString(args, 'contentBase64'),
+            idempotencyKey:
+              this.optionalString(args, 'idempotencyKey') ?? undefined,
+          },
+          context,
+        );
+      case 'delete_attachment':
+        this.requireConfirmation(args, 'delete_attachment');
+        return this.attachmentMcpService.deleteAttachment(
+          {
+            attachmentId: this.requireString(args, 'attachmentId'),
+            idempotencyKey:
+              this.optionalString(args, 'idempotencyKey') ?? undefined,
+            confirm: true,
+          },
+          context,
+        );
       case 'search_docs':
         return this.searchDocs(args, context);
       case 'semantic_search_docs':
@@ -2695,15 +2922,39 @@ export class McpToolService {
   }
 
   private getLimit(args: JsonObject, max: number, fallback: number): number {
-    const value = args.limit;
+    return this.getNamedLimit(args, 'limit', max, fallback);
+  }
+
+  private getNamedLimit(
+    args: JsonObject,
+    field: string,
+    max: number,
+    fallback: number,
+  ): number {
+    const value = args[field];
     if (typeof value === 'undefined' || value === null) {
       return fallback;
     }
     if (typeof value !== 'number' || !Number.isFinite(value)) {
-      throw new BadRequestException('limit must be a number');
+      throw new BadRequestException(`${field} must be a number`);
     }
 
     return Math.max(1, Math.min(Math.floor(value), max));
+  }
+
+  private optionalBoolean(
+    args: JsonObject,
+    field: string,
+    fallback: boolean,
+  ): boolean {
+    const value = args[field];
+    if (typeof value === 'undefined' || value === null) {
+      return fallback;
+    }
+    if (typeof value !== 'boolean') {
+      throw new BadRequestException(`${field} must be a boolean`);
+    }
+    return value;
   }
 
   private getOffset(args: JsonObject): number {

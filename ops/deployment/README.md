@@ -69,6 +69,16 @@ curl --fail https://docs.example.com/api/health
 Only `POST /mcp` is accepted by the MCP location. The metrics endpoint is both
 bearer-token protected by Docmost and network-restricted by Nginx.
 
+The MCP endpoint also exposes page history and attachment tools. History reads
+reuse `read`; version restore, attachment upload, and attachment deletion reuse
+`update`. Restore and deletion require `confirm=true`, and restore also requires
+the current `expectedUpdatedAt` value.
+
+`get_attachment` returns an expiring signed storage URL when the configured
+driver supports it. `upload_attachment` accepts strict Base64 content up to
+512 KiB so the JSON request stays below the server body limit. Use the Docmost
+web upload for larger files until the separate presigned PUT flow is available.
+
 ## Canary sequence
 
 1. Boot with `MCP_ENABLED=false` and `VECTOR_SEARCH_ENABLED=false`.

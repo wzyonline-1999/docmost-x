@@ -47,11 +47,13 @@ describe('McpToolService', () => {
     overrides: {
       db?: unknown;
       auditService?: unknown;
+      attachmentMcpService?: unknown;
       embeddingService?: unknown;
       environmentService?: unknown;
       idempotencyService?: unknown;
       pageRepo?: unknown;
       pageService?: unknown;
+      pageHistoryMcpService?: unknown;
       permissionService?: unknown;
       vectorIndexService?: unknown;
       actorAccessService?: unknown;
@@ -63,11 +65,13 @@ describe('McpToolService', () => {
         tryLog: jest.fn().mockResolvedValue(true),
         logPermissionDenied: jest.fn().mockResolvedValue(true),
       }) as never,
+      (overrides.attachmentMcpService ?? null) as never,
       (overrides.embeddingService ?? null) as never,
       (overrides.environmentService ?? null) as never,
       (overrides.idempotencyService ?? null) as never,
       (overrides.pageRepo ?? null) as never,
       (overrides.pageService ?? null) as never,
+      (overrides.pageHistoryMcpService ?? null) as never,
       (overrides.permissionService ?? null) as never,
       (overrides.vectorIndexService ?? null) as never,
       (overrides.actorAccessService ?? null) as never,
@@ -131,6 +135,14 @@ describe('McpToolService', () => {
       'list_spaces',
       'list_pages',
       'get_page',
+      'list_page_versions',
+      'get_page_version',
+      'diff_page_versions',
+      'restore_page_version',
+      'list_attachments',
+      'get_attachment',
+      'upload_attachment',
+      'delete_attachment',
       'search_docs',
       'semantic_search_docs',
       'create_page',
