@@ -7,6 +7,9 @@ export type McpVectorTextChunk = {
   startOffset: number;
   endOffset: number;
   charLength: number;
+  sourceType?: 'page' | 'attachment';
+  attachmentId?: string;
+  attachmentFileName?: string;
 };
 
 export type McpVectorPageInput = {
@@ -87,6 +90,8 @@ export type McpVectorIndexStats = Json & {
   model?: string;
   dimensions?: number;
   contentLength?: number;
+  attachmentCount?: number;
+  attachmentChunkCount?: number;
   deleted?: boolean;
   skipped?: boolean;
   skippedReason?: string;

@@ -13,6 +13,14 @@ export type VectorPageTextSource = {
   textContent?: string | null;
 };
 
+export type VectorAttachmentTextSource = {
+  id: string;
+  fileName: string;
+  textContent?: string | null;
+};
+
+const MAX_VECTOR_ATTACHMENT_TOTAL_CHARS = 1_000_000;
+
 const BOUNDARY_PATTERNS = [
   '\n\n',
   '\n',
@@ -131,6 +139,61 @@ export class McpVectorTextService {
       maxChars: this.environmentService.getVectorChunkMaxChars(),
       overlapChars: this.environmentService.getVectorChunkOverlapChars(),
     });
+  }
+
+  buildDocumentChunks(
+    page: VectorPageTextSource,
+    attachments: VectorAttachmentTextSource[],
+  ): McpVectorTextChunk[] {
+    const chunks: McpVectorTextChunk[] = [];
+    this.appendSourceChunks(chunks, this.buildPageText(page), {
+      sourceType: 'page',
+    });
+
+    let remainingAttachmentChars = MAX_VECTOR_ATTACHMENT_TOTAL_CHARS;
+    for (const attachment of attachments) {
+      if (remainingAttachmentChars === 0) {
+        break;
+      }
+      const fileName = normalizeVectorText(attachment.fileName);
+      const availableText = normalizeVectorText(
+        attachment.textContent ?? '',
+      ).slice(0, remainingAttachmentChars);
+      if (!availableText) {
+        continue;
+      }
+      remainingAttachmentChars = Math.max(
+        0,
+        remainingAttachmentChars - availableText.length,
+      );
+      const attachmentText = normalizeVectorText(
+        [`Attachment: ${fileName}`, availableText].filter(Boolean).join('\n\n'),
+      );
+      this.appendSourceChunks(chunks, attachmentText, {
+        sourceType: 'attachment',
+        attachmentId: attachment.id,
+        attachmentFileName: fileName,
+      });
+    }
+
+    return chunks;
+  }
+
+  private appendSourceChunks(
+    target: McpVectorTextChunk[],
+    text: string,
+    source: Pick<
+      McpVectorTextChunk,
+      'sourceType' | 'attachmentId' | 'attachmentFileName'
+    >,
+  ): void {
+    for (const chunk of this.chunkPageText(text)) {
+      target.push({
+        ...chunk,
+        ...source,
+        chunkIndex: target.length,
+      });
+    }
   }
 
   private extractPlainText(page: VectorPageTextSource): string {

@@ -73,6 +73,11 @@ type SearchItem = {
     final: number;
   };
   source: 'keyword' | 'semantic' | 'hybrid';
+  contentSource: {
+    type: 'page' | 'attachment';
+    attachmentId?: string;
+    fileName?: string;
+  };
 };
 
 type PageMetadata = {
@@ -1893,6 +1898,7 @@ export class McpToolService {
         final: Number(row.score),
       },
       source: 'keyword',
+      contentSource: { type: 'page' },
     }));
   }
 
@@ -1947,6 +1953,7 @@ export class McpToolService {
         'pages.updatedAt',
         'chunks.content',
         'chunks.chunkIndex',
+        'chunks.metadata',
         sql<number>`1 - (${distance})`.as('score'),
       ])
       .distinctOn('chunks.pageId')
@@ -1985,6 +1992,7 @@ export class McpToolService {
             final: Number(row.score),
           },
           source: 'semantic',
+          contentSource: this.toSearchContentSource(row.metadata),
         })),
       ),
     );
@@ -2999,5 +3007,26 @@ export class McpToolService {
     }
 
     return snippet.replace(/\r\n|\r|\n/g, ' ').replace(/\s+/g, ' ');
+  }
+
+  private toSearchContentSource(
+    value: Json | null,
+  ): SearchItem['contentSource'] {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return { type: 'page' };
+    }
+    const metadata = value as Record<string, unknown>;
+    if (
+      metadata.sourceType === 'attachment' &&
+      typeof metadata.attachmentId === 'string' &&
+      typeof metadata.attachmentFileName === 'string'
+    ) {
+      return {
+        type: 'attachment',
+        attachmentId: metadata.attachmentId,
+        fileName: metadata.attachmentFileName,
+      };
+    }
+    return { type: 'page' };
   }
 }

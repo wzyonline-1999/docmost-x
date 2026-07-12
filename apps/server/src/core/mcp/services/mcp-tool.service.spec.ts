@@ -1326,6 +1326,11 @@ describe('McpToolService', () => {
           content: 'Allowed content',
           chunkIndex: 0,
           score: 0.9,
+          metadata: {
+            sourceType: 'attachment',
+            attachmentId: 'attachment-1',
+            attachmentFileName: 'report.pdf',
+          },
         },
         {
           pageId: 'denied-page',
@@ -1334,6 +1339,7 @@ describe('McpToolService', () => {
           content: 'Denied content',
           chunkIndex: 0,
           score: 0.8,
+          metadata: { sourceType: 'page' },
         },
       ]),
     };
@@ -1373,7 +1379,17 @@ describe('McpToolService', () => {
     );
 
     expect(result.structuredContent).toMatchObject({
-      items: [{ pageId: 'allowed-page', title: 'Allowed result' }],
+      items: [
+        {
+          pageId: 'allowed-page',
+          title: 'Allowed result',
+          contentSource: {
+            type: 'attachment',
+            attachmentId: 'attachment-1',
+            fileName: 'report.pdf',
+          },
+        },
+      ],
     });
     expect(semanticQuery.innerJoin).toHaveBeenCalledWith(
       'pages',

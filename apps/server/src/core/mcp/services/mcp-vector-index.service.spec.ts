@@ -54,6 +54,12 @@ describe('McpVectorIndexService permission eligibility', () => {
     execute: jest.fn(),
     executeTakeFirst: jest.fn(),
   };
+  const attachmentSelectQuery = {
+    select: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    execute: jest.fn(),
+  };
   const dimensionQuery = {
     select: jest.fn().mockReturnThis(),
     executeTakeFirst: jest.fn(),
@@ -86,7 +92,9 @@ describe('McpVectorIndexService permission eligibility', () => {
   const db = {
     selectFrom: jest.fn((table: string | object) => {
       if (typeof table !== 'string') return dimensionQuery;
-      return table === 'docmostMcpIndexJobs' ? jobSelectQuery : pageSelectQuery;
+      if (table === 'docmostMcpIndexJobs') return jobSelectQuery;
+      if (table === 'attachments') return attachmentSelectQuery;
+      return pageSelectQuery;
     }),
     updateTable: jest.fn(() => updateQuery),
     insertInto: jest.fn(() => insertQuery),
@@ -108,6 +116,7 @@ describe('McpVectorIndexService permission eligibility', () => {
   const vectorTextService = {
     buildPageText: jest.fn(),
     chunkPageText: jest.fn(),
+    buildDocumentChunks: jest.fn(),
   };
   const eligibilityService = {
     evaluatePageIds: jest.fn(),
@@ -124,6 +133,7 @@ describe('McpVectorIndexService permission eligibility', () => {
       { id: page.id, workspaceId: page.workspaceId, spaceId: page.spaceId },
     ]);
     pageSelectQuery.executeTakeFirst.mockResolvedValue(page);
+    attachmentSelectQuery.execute.mockResolvedValue([]);
     dimensionQuery.executeTakeFirst.mockResolvedValue({
       declaredType: 'vector(1536)',
     });
@@ -186,6 +196,38 @@ describe('McpVectorIndexService permission eligibility', () => {
       { indexJobId: job.id },
       { delay: 1000, jobId: `${job.id}-1` },
     );
+  });
+
+  it('changes the page dedupe key when extracted attachment text changes', async () => {
+    const attachmentRecord = {
+      id: 'attachment-1',
+      fileName: 'report.pdf',
+      textContent: 'first extracted body',
+      updatedAt: new Date('2026-07-12T00:00:00.000Z'),
+    };
+    attachmentSelectQuery.execute
+      .mockResolvedValueOnce([attachmentRecord])
+      .mockResolvedValueOnce([
+        { ...attachmentRecord, textContent: 'second extracted body' },
+      ]);
+    const privateService = service as unknown as {
+      buildPageDedupeKey: (
+        input: { pageId: string; workspaceId: string; spaceId: string },
+        jobType: 'page',
+      ) => Promise<string>;
+    };
+    const input = {
+      pageId: page.id,
+      workspaceId: page.workspaceId,
+      spaceId: page.spaceId,
+    };
+
+    const first = await privateService.buildPageDedupeKey(input, 'page');
+    const second = await privateService.buildPageDedupeKey(input, 'page');
+
+    expect(first).toMatch(/^[a-f0-9]{64}$/);
+    expect(second).toMatch(/^[a-f0-9]{64}$/);
+    expect(second).not.toBe(first);
   });
 
   it('recovers a persisted queued job that is missing from BullMQ', async () => {
@@ -318,7 +360,7 @@ describe('McpVectorIndexService permission eligibility', () => {
       page.workspaceId,
       page.id,
     );
-    expect(vectorTextService.buildPageText).not.toHaveBeenCalled();
+    expect(vectorTextService.buildDocumentChunks).not.toHaveBeenCalled();
     expect(embeddingService.createEmbeddings).not.toHaveBeenCalled();
     expect(updateQuery.set).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -375,8 +417,7 @@ describe('McpVectorIndexService permission eligibility', () => {
       attemptCount: 1,
     });
     eligibilityService.isPageEligible.mockResolvedValueOnce(true);
-    vectorTextService.buildPageText.mockReturnValueOnce('restored content');
-    vectorTextService.chunkPageText.mockReturnValueOnce(chunks);
+    vectorTextService.buildDocumentChunks.mockReturnValueOnce(chunks);
     embeddingService.createEmbeddings.mockResolvedValueOnce([
       new Array(1536).fill(0.1),
     ]);
@@ -402,9 +443,70 @@ describe('McpVectorIndexService permission eligibility', () => {
     expect(writePageChunks).toHaveBeenCalledTimes(1);
   });
 
+  it('includes extracted attachments in page indexing and job stats', async () => {
+    const attachments = [
+      {
+        id: 'attachment-1',
+        fileName: 'report.pdf',
+        textContent: 'attachment body',
+        updatedAt: new Date('2026-07-12T00:00:00.000Z'),
+      },
+    ];
+    const chunks = [
+      {
+        chunkIndex: 0,
+        content: 'Attachment: report.pdf\n\nattachment body',
+        contentHash: 'attachment-hash',
+        startOffset: 0,
+        endOffset: 40,
+        charLength: 40,
+        sourceType: 'attachment' as const,
+        attachmentId: 'attachment-1',
+        attachmentFileName: 'report.pdf',
+      },
+    ];
+    eligibilityService.isPageEligible.mockResolvedValueOnce(true);
+    attachmentSelectQuery.execute.mockResolvedValueOnce(attachments);
+    vectorTextService.buildDocumentChunks.mockReturnValueOnce(chunks);
+    embeddingService.createEmbeddings.mockResolvedValueOnce([
+      new Array(1536).fill(0.1),
+    ]);
+    const privateService = service as unknown as {
+      getActivePageChunks: () => Promise<unknown[]>;
+      writePageChunks: () => Promise<void>;
+    };
+    jest.spyOn(privateService, 'getActivePageChunks').mockResolvedValueOnce([]);
+    const writePageChunks = jest
+      .spyOn(privateService, 'writePageChunks')
+      .mockResolvedValueOnce(undefined);
+
+    await expect(service.runQueuedJob(job.id)).resolves.toEqual(
+      expect.objectContaining({ embeddedCount: 1, chunkCount: 1 }),
+    );
+
+    expect(vectorTextService.buildDocumentChunks).toHaveBeenCalledWith(
+      page,
+      attachments,
+    );
+    expect(writePageChunks).toHaveBeenCalledWith(
+      page,
+      chunks,
+      expect.any(Map),
+      expect.any(Map),
+    );
+    expect(updateQuery.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stats: expect.objectContaining({
+          attachmentCount: 1,
+          attachmentChunkCount: 1,
+        }),
+      }),
+    );
+  });
+
   it('persists only a classified error when an index job fails', async () => {
     eligibilityService.isPageEligible.mockResolvedValueOnce(true);
-    vectorTextService.buildPageText.mockImplementationOnce(() => {
+    vectorTextService.buildDocumentChunks.mockImplementationOnce(() => {
       throw new Error('secret-token and restricted page content');
     });
 
@@ -441,8 +543,7 @@ describe('McpVectorIndexService permission eligibility', () => {
       },
     ];
     eligibilityService.isPageEligible.mockResolvedValueOnce(true);
-    vectorTextService.buildPageText.mockReturnValueOnce('two chunks');
-    vectorTextService.chunkPageText.mockReturnValueOnce(chunks);
+    vectorTextService.buildDocumentChunks.mockReturnValueOnce(chunks);
     embeddingService.createEmbeddings.mockRejectedValueOnce(
       new Error('provider returned the wrong vector count'),
     );
@@ -486,8 +587,7 @@ describe('McpVectorIndexService permission eligibility', () => {
       },
     ];
     eligibilityService.isPageEligible.mockResolvedValueOnce(true);
-    vectorTextService.buildPageText.mockReturnValueOnce('page text');
-    vectorTextService.chunkPageText.mockReturnValueOnce(chunks);
+    vectorTextService.buildDocumentChunks.mockReturnValueOnce(chunks);
     embeddingService.createEmbeddings.mockResolvedValueOnce([
       new Array(1536).fill(0.1),
     ]);
@@ -536,6 +636,9 @@ describe('McpVectorIndexService permission eligibility', () => {
         startOffset: 0,
         endOffset: 5,
         charLength: 5,
+        sourceType: 'attachment' as const,
+        attachmentId: 'attachment-1',
+        attachmentFileName: 'notes.txt',
       },
     ];
     const privateService = service as unknown as {
@@ -586,6 +689,14 @@ describe('McpVectorIndexService permission eligibility', () => {
     expect(updateQuery.set).toHaveBeenCalledWith(
       expect.objectContaining({
         spaceId: page.spaceId,
+        metadata: {
+          startOffset: 0,
+          endOffset: 5,
+          charLength: 5,
+          sourceType: 'attachment',
+          attachmentId: 'attachment-1',
+          attachmentFileName: 'notes.txt',
+        },
         indexedAt: expect.any(Date),
       }),
     );

@@ -1,5 +1,6 @@
 import {
   chunkVectorText,
+  McpVectorTextService,
   normalizeVectorText,
 } from './mcp-vector-text.service';
 
@@ -35,6 +36,70 @@ describe('MCP vector text helpers', () => {
       'bcd',
       'cde',
       'def',
+    ]);
+  });
+
+  it('builds source-aware page and attachment chunks', () => {
+    const service = new McpVectorTextService({
+      getVectorChunkMaxChars: () => 100,
+      getVectorChunkOverlapChars: () => 0,
+    } as never);
+
+    const chunks = service.buildDocumentChunks(
+      { title: 'Page title', textContent: 'Page body' },
+      [
+        {
+          id: 'attachment-1',
+          fileName: 'report.pdf',
+          textContent: 'Attachment body',
+        },
+      ],
+    );
+
+    expect(chunks).toEqual([
+      expect.objectContaining({
+        chunkIndex: 0,
+        sourceType: 'page',
+        content: 'Page title\n\nPage body',
+      }),
+      expect.objectContaining({
+        chunkIndex: 1,
+        sourceType: 'attachment',
+        attachmentId: 'attachment-1',
+        attachmentFileName: 'report.pdf',
+        content: 'Attachment: report.pdf\n\nAttachment body',
+      }),
+    ]);
+  });
+
+  it('skips attachments without extracted text', () => {
+    const service = new McpVectorTextService({
+      getVectorChunkMaxChars: () => 100,
+      getVectorChunkOverlapChars: () => 0,
+    } as never);
+
+    const chunks = service.buildDocumentChunks(
+      { title: 'Page title', textContent: null },
+      [
+        {
+          id: 'attachment-1',
+          fileName: 'image.png',
+          textContent: null,
+        },
+        {
+          id: 'attachment-2',
+          fileName: 'empty.txt',
+          textContent: '  \r\n ',
+        },
+      ],
+    );
+
+    expect(chunks).toEqual([
+      expect.objectContaining({
+        chunkIndex: 0,
+        sourceType: 'page',
+        content: 'Page title',
+      }),
     ]);
   });
 });

@@ -46,6 +46,11 @@ describe('McpVectorIndexListener', () => {
       'restore',
       (target: McpVectorIndexListener) => target.handlePageRestored,
     ],
+    [
+      'attachment content updated',
+      'page',
+      (target: McpVectorIndexListener) => target.handleAttachmentContentUpdated,
+    ],
   ] as const)(
     'enqueues %s page events as durable %s jobs',
     async (_eventName, jobType, getHandler) => {

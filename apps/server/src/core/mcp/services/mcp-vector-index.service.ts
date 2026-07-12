@@ -17,8 +17,12 @@ import type { DocmostMcpIndexJob } from '@docmost/db/types/entity.types';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { QueueJob, QueueName } from '../../../integrations/queue/constants';
 import { McpEmbeddingService } from './mcp-embedding.service';
-import { McpVectorTextService } from './mcp-vector-text.service';
+import {
+  McpVectorTextService,
+  VectorAttachmentTextSource,
+} from './mcp-vector-text.service';
 import { McpVectorEligibilityService } from './mcp-vector-eligibility.service';
+import { AttachmentType } from '../../attachment/attachment.constants';
 import {
   McpVectorBatchIndexInput,
   McpVectorBatchIndexResult,
@@ -51,6 +55,10 @@ type ExistingVectorChunk = {
   chunkIndex: number;
   contentHash: string;
   embeddingDimensions: number;
+};
+
+type PageAttachmentForVectorIndex = VectorAttachmentTextSource & {
+  updatedAt: Date;
 };
 
 type EnqueuePageOptions = {
@@ -566,8 +574,11 @@ export class McpVectorIndexService implements OnModuleInit {
         };
       }
 
-      const pageText = this.vectorTextService.buildPageText(page);
-      const chunks = this.vectorTextService.chunkPageText(pageText);
+      const attachments = await this.getPageAttachments(page);
+      const chunks = this.vectorTextService.buildDocumentChunks(
+        page,
+        attachments,
+      );
       const existingChunks = await this.getActivePageChunks(page);
       const existingByIndex = new Map(
         existingChunks.map((chunk) => [chunk.chunkIndex, chunk]),
@@ -605,7 +616,14 @@ export class McpVectorIndexService implements OnModuleInit {
         reusedCount: chunks.length - changedChunks.length,
         model: this.environmentService.getEmbeddingModel(),
         dimensions: this.environmentService.getEmbeddingDimensions(),
-        contentLength: pageText.length,
+        contentLength: chunks.reduce(
+          (total, chunk) => total + chunk.charLength,
+          0,
+        ),
+        attachmentCount: attachments.length,
+        attachmentChunkCount: chunks.filter(
+          (chunk) => chunk.sourceType === 'attachment',
+        ).length,
         deleted: false,
       };
       await this.markJobSucceeded(runningJob.id, stats);
@@ -867,6 +885,34 @@ export class McpVectorIndexService implements OnModuleInit {
       .executeTakeFirst();
   }
 
+  private async getPageAttachments(
+    page: Pick<PageForVectorIndex, 'id' | 'workspaceId'>,
+  ): Promise<PageAttachmentForVectorIndex[]> {
+    return this.db
+      .selectFrom('attachments')
+      .select(['id', 'fileName', 'textContent', 'updatedAt'])
+      .where('workspaceId', '=', page.workspaceId)
+      .where('pageId', '=', page.id)
+      .where('type', '=', AttachmentType.File)
+      .where('textContent', 'is not', null)
+      .where('deletedAt', 'is', null)
+      .orderBy('createdAt', 'asc')
+      .execute();
+  }
+
+  private toChunkMetadata(chunk: McpVectorTextChunk): Json {
+    return {
+      startOffset: chunk.startOffset,
+      endOffset: chunk.endOffset,
+      charLength: chunk.charLength,
+      sourceType: chunk.sourceType ?? 'page',
+      ...(chunk.attachmentId ? { attachmentId: chunk.attachmentId } : {}),
+      ...(chunk.attachmentFileName
+        ? { attachmentFileName: chunk.attachmentFileName }
+        : {}),
+    } as Json;
+  }
+
   private async getActivePageChunks(
     page: Pick<PageForVectorIndex, 'id' | 'workspaceId'>,
   ): Promise<ExistingVectorChunk[]> {
@@ -945,6 +991,7 @@ export class McpVectorIndexService implements OnModuleInit {
     jobType: Extract<McpVectorIndexJobType, 'page' | 'delete' | 'restore'>,
   ): Promise<string> {
     const page = await this.getPage(input.workspaceId, input.pageId);
+    const attachments = page ? await this.getPageAttachments(page) : [];
     return this.hashDedupeKey([
       jobType,
       input.workspaceId,
@@ -957,6 +1004,14 @@ export class McpVectorIndexService implements OnModuleInit {
             content: page.content,
             textContent: page.textContent,
             deletedAt: page.deletedAt,
+            attachments: attachments.map((attachment) => ({
+              id: attachment.id,
+              fileName: attachment.fileName,
+              textContentHash: createHash('sha256')
+                .update(attachment.textContent ?? '')
+                .digest('hex'),
+              updatedAt: attachment.updatedAt,
+            })),
           }
         : 'missing',
     ]);
@@ -1004,6 +1059,7 @@ export class McpVectorIndexService implements OnModuleInit {
     await this.db.transaction().execute(async (trx) => {
       for (const chunk of chunks) {
         const existing = existingByIndex.get(chunk.chunkIndex);
+        const metadata = this.toChunkMetadata(chunk);
         if (
           existing &&
           existing.contentHash === chunk.contentHash &&
@@ -1013,6 +1069,7 @@ export class McpVectorIndexService implements OnModuleInit {
             .updateTable('docmostMcpChunks')
             .set({
               spaceId: page.spaceId,
+              metadata,
               indexedAt,
               updatedAt: indexedAt,
             })
@@ -1036,11 +1093,7 @@ export class McpVectorIndexService implements OnModuleInit {
           embedding: sql<number[]>`${formatPgVector(embedding)}::vector`,
           embeddingModel: model,
           embeddingDimensions: dimensions,
-          metadata: {
-            startOffset: chunk.startOffset,
-            endOffset: chunk.endOffset,
-            charLength: chunk.charLength,
-          } as Json,
+          metadata,
           indexedAt,
           updatedAt: indexedAt,
         };

@@ -42,6 +42,11 @@ export class McpVectorIndexListener {
     this.schedulePageJobs(event, 'restore');
   }
 
+  @OnEvent(EventName.ATTACHMENT_CONTENT_UPDATED)
+  handleAttachmentContentUpdated(event: PageEvent): void {
+    this.schedulePageJobs(event, 'page');
+  }
+
   private schedulePageJobs(
     event: PageEvent,
     jobType: 'page' | 'delete' | 'restore',
