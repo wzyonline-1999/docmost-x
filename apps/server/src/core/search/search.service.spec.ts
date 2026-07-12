@@ -1,18 +1,20 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { SearchService } from './search.service';
 
 describe('SearchService', () => {
   let service: SearchService;
+  const dependency = {} as never;
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [SearchService],
-    }).compile();
-
-    service = module.get<SearchService>(SearchService);
+  beforeEach(() => {
+    service = new SearchService(
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+    );
   });
 
   it('should be defined', () => {
-    expect(service).toBeDefined();
+    expect(service).toBeInstanceOf(SearchService);
   });
 });

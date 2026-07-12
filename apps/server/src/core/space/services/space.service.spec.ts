@@ -1,18 +1,23 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { SpaceService } from './space.service';
 
 describe('SpaceService', () => {
   let service: SpaceService;
+  const dependency = {} as never;
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [SpaceService],
-    }).compile();
-
-    service = module.get<SpaceService>(SpaceService);
+  beforeEach(() => {
+    service = new SpaceService(
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+    );
   });
 
   it('should be defined', () => {
-    expect(service).toBeDefined();
+    expect(service).toBeInstanceOf(SpaceService);
   });
 });

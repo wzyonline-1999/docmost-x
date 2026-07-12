@@ -1,18 +1,27 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { PageService } from './page.service';
 
 describe('PageService', () => {
   let service: PageService;
+  const dependency = {} as never;
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [PageService],
-    }).compile();
-
-    service = module.get<PageService>(PageService);
+  beforeEach(() => {
+    service = new PageService(
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+    );
   });
 
   it('should be defined', () => {
-    expect(service).toBeDefined();
+    expect(service).toBeInstanceOf(PageService);
   });
 });

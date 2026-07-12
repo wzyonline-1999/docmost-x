@@ -169,12 +169,13 @@
     "moduleFileExtensions": [
       "js",
       "json",
-      "ts"
+      "ts",
+      "tsx"
     ],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "happy-dom.+\\.js$": [
+      "(nanoid|uuid|image-dimensions|marked|happy-dom|lib0).+\\.js$": [
         "babel-jest",
         {
           "presets": [
@@ -189,10 +190,10 @@
           ]
         }
       ],
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.tsx?$": "ts-jest"
     },
     "transformIgnorePatterns": [
-      "/node_modules/(?!(\\.pnpm/)?(nanoid|uuid|image-dimensions|marked|happy-dom)(@|/))"
+      "/node_modules/(?!(\\.pnpm/)?(nanoid|uuid|image-dimensions|marked|happy-dom|lib0)(@|/))"
     ],
     "collectCoverageFrom": [
       "**/*.(t|j)s"

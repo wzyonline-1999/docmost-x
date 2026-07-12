@@ -1,18 +1,33 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { WorkspaceService } from './workspace.service';
 
 describe('WorkspaceService', () => {
   let service: WorkspaceService;
+  const dependency = {} as never;
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [WorkspaceService],
-    }).compile();
-
-    service = module.get<WorkspaceService>(WorkspaceService);
+  beforeEach(() => {
+    service = new WorkspaceService(
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+    );
   });
 
   it('should be defined', () => {
-    expect(service).toBeDefined();
+    expect(service).toBeInstanceOf(WorkspaceService);
   });
 });

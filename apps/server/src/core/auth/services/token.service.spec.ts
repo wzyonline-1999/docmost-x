@@ -1,18 +1,14 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { TokenService } from './token.service';
 
 describe('TokenService', () => {
   let service: TokenService;
+  const dependency = {} as never;
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [TokenService],
-    }).compile();
-
-    service = module.get<TokenService>(TokenService);
+  beforeEach(() => {
+    service = new TokenService(dependency, dependency);
   });
 
   it('should be defined', () => {
-    expect(service).toBeDefined();
+    expect(service).toBeInstanceOf(TokenService);
   });
 });

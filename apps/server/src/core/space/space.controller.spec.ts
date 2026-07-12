@@ -1,20 +1,20 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { SpaceController } from './space.controller';
-import { SpaceService } from './services/space.service';
 
 describe('SpaceController', () => {
   let controller: SpaceController;
+  const dependency = {} as never;
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      controllers: [SpaceController],
-      providers: [SpaceService],
-    }).compile();
-
-    controller = module.get<SpaceController>(SpaceController);
+  beforeEach(() => {
+    controller = new SpaceController(
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+      dependency,
+    );
   });
 
   it('should be defined', () => {
-    expect(controller).toBeDefined();
+    expect(controller).toBeInstanceOf(SpaceController);
   });
 });

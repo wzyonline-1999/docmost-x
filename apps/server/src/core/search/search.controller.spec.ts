@@ -1,18 +1,14 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { SearchController } from './search.controller';
 
 describe('SearchController', () => {
   let controller: SearchController;
+  const dependency = {} as never;
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      controllers: [SearchController],
-    }).compile();
-
-    controller = module.get<SearchController>(SearchController);
+  beforeEach(() => {
+    controller = new SearchController(dependency, dependency, dependency);
   });
 
   it('should be defined', () => {
-    expect(controller).toBeDefined();
+    expect(controller).toBeInstanceOf(SearchController);
   });
 });
