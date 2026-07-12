@@ -17,7 +17,8 @@ verified_at: 2026-07-12
 - Coverage gate: the seven core security services exceed 90% line and 80% branch coverage.
 - Repository hygiene: generated browser snapshots were removed and the high-entropy secret scan returned no matches.
 - Dark boot: the production build starts without embedding credentials when both feature flags are false, and `/mcp` rejects bearer requests as disabled.
-- Production stable release: the Hong Kong VPS runs `docmost-mcp-vector-v0.3.0` with `MCP_ENABLED=true` and `VECTOR_SEARCH_ENABLED=true`; image digest `sha256:8d5073c0eb526eb507ebe013cebe5fed48e8b9ebb21b3b85a0b2522d92ed2166` is a checksum-verified offline derivative of `v0.2.2` built from commit `2226e7e`.
+- Production stable release: the Hong Kong VPS runs `docmost-mcp-vector-v0.3.1` with `MCP_ENABLED=true` and `VECTOR_SEARCH_ENABLED=true`; checksum-verified image digest `sha256:587ec2b59be52073703551015640872e383f0982b4ca281210a959d0a1d4dda2` was built from commit `9d2f0c5`.
+- Full regression and dependency audit: all 54 server suites and 474 tests pass, the three-project production build succeeds, and `pnpm audit --prod` reports no known vulnerabilities.
 - Production Codex: isolated `codex-cli 0.144.0-alpha.4` used official ChatGPT authentication and only the Docmost MCP to complete `search_docs` and `get_page` against the canary page.
 - Production observability: Prometheus scrapes the Token-protected endpoint over the private Docmost Docker network, all seven MCP alert rules are healthy and inactive, and Grafana provisions the `Docmost MCP` dashboard.
 - T18 is complete: the single-user owner explicitly selected direct stable release, and health, authenticated MCP initialize, monitoring, logs, rollback, vector indexing, and production retrieval evidence all passed.
