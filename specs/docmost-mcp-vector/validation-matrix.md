@@ -4,7 +4,7 @@ title: Docmost MCP and Vector Search Validation Matrix
 doc_type: validation
 status: production-stable
 version: v1
-verified_at: 2026-07-11
+verified_at: 2026-07-12
 ---
 
 # MCP and Vector Validation Matrix
@@ -17,13 +17,16 @@ verified_at: 2026-07-11
 - Coverage gate: the seven core security services exceed 90% line and 80% branch coverage.
 - Repository hygiene: generated browser snapshots were removed and the high-entropy secret scan returned no matches.
 - Dark boot: the production build starts without embedding credentials when both feature flags are false, and `/mcp` rejects bearer requests as disabled.
-- Production stable release: the Hong Kong VPS runs immutable image `docmost-mcp-vector-v0.2.1` with `MCP_ENABLED=true` and `VECTOR_SEARCH_ENABLED=false`; image digest `sha256:da60f4c297e7b136d7feaccd7951ae9f438564d5f77fa48b8c565320eb834067` was loaded from the checksum-verified GitHub prerelease artifact built from commit `eeeebf6`.
+- Production stable release: the Hong Kong VPS runs `docmost-mcp-vector-v0.2.2` with `MCP_ENABLED=true` and `VECTOR_SEARCH_ENABLED=true`; image digest `sha256:0a8b7fccf656fdebc21542ce0a1e5558b666317111e043e9c14aafa2469e1f90` is an offline derivative of the checksum-verified `v0.2.1` image with the compiled artifact from commit `b5a8020`.
 - Production Codex: isolated `codex-cli 0.144.0-alpha.4` used official ChatGPT authentication and only the Docmost MCP to complete `search_docs` and `get_page` against the canary page.
 - Production observability: Prometheus scrapes the Token-protected endpoint over the private Docmost Docker network, all seven MCP alert rules are healthy and inactive, and Grafana provisions the `Docmost MCP` dashboard.
-- T18 is complete: the single-user owner explicitly selected direct stable release, and health, authenticated MCP initialize, monitoring, logs, and rollback evidence all passed. Vector enablement remains a separate provider-dependent follow-up.
+- T18 is complete: the single-user owner explicitly selected direct stable release, and health, authenticated MCP initialize, monitoring, logs, rollback, vector indexing, and production retrieval evidence all passed.
 - MCP history and attachments: existing Docmost history, Attachment metadata, S3 storage, and extraction queues now back eight additional permission-scoped MCP tools without a schema migration.
 - Production history/attachment smoke: authenticated `tools/list` returned 27 tools and all eight new names; safe reads against an authorized page returned one version and an empty attachment list without exposing page or attachment content. The replacement container is healthy with zero restarts, no pending migrations, no recent error lines, and HTTP 200 from both local and public health endpoints.
 - Production write smoke: a disposable page completed create/update/version list/version read/diff/version restore, attachment upload/list/get/signed download/delete, page delete, and all idempotency replays. Database verification found all six idempotency actions completed, all seven expected audit events present, zero active smoke pages, and zero attachment residue.
+- Production vector provider: SiliconFlow `Qwen/Qwen3-Embedding-8B` returned valid 1536-dimensional vectors; the canary space indexed one active page into one active chunk with zero invalid dimensions.
+- Production vector retrieval: public HTTPS MCP keyword, Chinese cross-language semantic, and hybrid searches all returned the expected canary page. Semantic similarity was `0.672905`; hybrid final score was `0.749429`.
+- Production vector observability: three embedding calls and three inputs succeeded in `1.813793` seconds total, no failed embedding series was present, both permission/reindex audit events exist, and the healthy container has zero restarts, zero recent errors, and zero recent warnings.
 
 ## Case Evidence
 
@@ -109,6 +112,10 @@ verified_at: 2026-07-11
 | G-78 | PASS   | Feature coverage     | New history/attachment MCP services have 96.4% line, 83.45% branch, and 100% function coverage.                                           |
 | G-79 | PASS   | History integration  | MCP writes capture deduplicated history snapshots; cached restore replays add no snapshot.                                                |
 | G-80 | PASS   | Production write     | The `v0.2.1` smoke passed nine checks with audit evidence and zero active page or attachment residue.                                     |
+| G-81 | PASS   | SQL regression       | Commit `b5a8020` compiles the vector dimension subquery with `declared_type`; the regression test covers the production CamelCase plugin. |
+| G-82 | PASS   | Production vector    | `v0.2.2` starts with the 1536-dimension contract, indexes the canary page, and persists one valid Qwen3 embedding chunk.                  |
+| G-83 | PASS   | Production retrieval | Public MCP keyword, Chinese cross-language semantic, and hybrid searches all return the expected canary page without warnings.            |
+| G-84 | PASS   | Vector observability | Provider metrics report three successes and no failures; permission/reindex audits exist and recent application logs are clean.           |
 
 ## Repeatable Commands
 
