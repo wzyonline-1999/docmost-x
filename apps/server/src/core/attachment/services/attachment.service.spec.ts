@@ -1,5 +1,6 @@
 import { AttachmentType } from '../attachment.constants';
 import { AttachmentService } from './attachment.service';
+import { EventName } from '../../../common/events/event.contants';
 
 describe('AttachmentService MCP buffer operations', () => {
   const attachment = {
@@ -33,6 +34,7 @@ describe('AttachmentService MCP buffer operations', () => {
     const attachmentQueue = {
       add: jest.fn().mockResolvedValue(undefined),
     };
+    const eventEmitter = { emit: jest.fn() };
     const service = new AttachmentService(
       storageService as never,
       attachmentRepo as never,
@@ -41,9 +43,16 @@ describe('AttachmentService MCP buffer operations', () => {
       {} as never,
       {} as never,
       attachmentQueue as never,
+      eventEmitter as never,
     );
 
-    return { service, storageService, attachmentRepo, attachmentQueue };
+    return {
+      service,
+      storageService,
+      attachmentRepo,
+      attachmentQueue,
+      eventEmitter,
+    };
   };
 
   it('stores a buffer attachment and queues PDF content extraction', async () => {
@@ -130,6 +139,34 @@ describe('AttachmentService MCP buffer operations', () => {
     );
     expect(harness.attachmentRepo.deleteAttachmentById).toHaveBeenCalledWith(
       attachment.id,
+    );
+    expect(harness.eventEmitter.emit).toHaveBeenCalledWith(
+      EventName.ATTACHMENT_CONTENT_UPDATED,
+      {
+        attachmentId: attachment.id,
+        pageIds: [attachment.pageId],
+        workspaceId: attachment.workspaceId,
+      },
+    );
+  });
+
+  it('queues markdown content extraction', async () => {
+    const harness = createHarness();
+
+    await harness.service.uploadBufferFile({
+      buffer: Buffer.from('# searchable markdown'),
+      fileName: 'notes.md',
+      pageId: 'page-1',
+      userId: 'user-1',
+      spaceId: 'space-1',
+      workspaceId: 'workspace-1',
+      attachmentId: attachment.id,
+    });
+
+    expect(harness.attachmentQueue.add).toHaveBeenCalledWith(
+      'attachment-index-content',
+      { attachmentId: attachment.id },
+      expect.objectContaining({ attempts: 2 }),
     );
   });
 });

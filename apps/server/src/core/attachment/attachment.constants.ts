@@ -9,6 +9,14 @@ export enum AttachmentType {
 export const validImageExtensions = ['.jpg', '.png', '.jpeg'];
 export const MAX_AVATAR_SIZE = '10MB';
 
+export const SUPPORTED_ATTACHMENT_TEXT_EXTENSIONS = new Set([
+  '.txt',
+  '.md',
+  '.markdown',
+  '.docx',
+  '.pdf',
+]);
+
 export const inlineFileExtensions = [
   '.jpg',
   '.png',

@@ -3,12 +3,14 @@ import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { AttachmentService } from '../services/attachment.service';
 import { QueueJob, QueueName } from 'src/integrations/queue/constants';
+import { AttachmentContentIndexService } from '../services/attachment-content-index.service';
 
 @Processor(QueueName.ATTACHMENT_QUEUE)
 export class AttachmentProcessor extends WorkerHost implements OnModuleDestroy {
   private readonly logger = new Logger(AttachmentProcessor.name);
   constructor(
     private readonly attachmentService: AttachmentService,
+    private readonly attachmentContentIndexService: AttachmentContentIndexService,
   ) {
     super();
   }
@@ -35,7 +37,9 @@ export class AttachmentProcessor extends WorkerHost implements OnModuleDestroy {
         job.name === QueueJob.ATTACHMENT_INDEX_CONTENT ||
         job.name === QueueJob.ATTACHMENT_INDEXING
       ) {
-        this.logger.debug('Attachment indexing is not available in the community build');
+        await this.attachmentContentIndexService.indexAttachmentContent(
+          job.data.attachmentId,
+        );
         return;
       }
     } catch (err) {

@@ -6,11 +6,16 @@ import { UserModule } from '../user/user.module';
 import { WorkspaceModule } from '../workspace/workspace.module';
 import { AttachmentProcessor } from './processors/attachment.processor';
 import { TokenModule } from '../auth/token.module';
+import { AttachmentContentIndexService } from './services/attachment-content-index.service';
 
 @Module({
   imports: [StorageModule, UserModule, WorkspaceModule, TokenModule],
   controllers: [AttachmentController],
-  providers: [AttachmentService, AttachmentProcessor],
-  exports: [AttachmentService],
+  providers: [
+    AttachmentContentIndexService,
+    AttachmentService,
+    AttachmentProcessor,
+  ],
+  exports: [AttachmentContentIndexService, AttachmentService],
 })
 export class AttachmentModule {}

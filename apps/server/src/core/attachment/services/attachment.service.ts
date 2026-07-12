@@ -15,7 +15,11 @@ import {
 } from '../attachment.utils';
 import { v4 as uuid4, v7 as uuid7 } from 'uuid';
 import { AttachmentRepo } from '@docmost/db/repos/attachment/attachment.repo';
-import { AttachmentType, validImageExtensions } from '../attachment.constants';
+import {
+  AttachmentType,
+  SUPPORTED_ATTACHMENT_TEXT_EXTENSIONS,
+  validImageExtensions,
+} from '../attachment.constants';
 import { KyselyDB, KyselyTransaction } from '@docmost/db/types/kysely.types';
 import { Attachment, User, Workspace } from '@docmost/db/types/entity.types';
 import { InjectKysely } from 'nestjs-kysely';
@@ -29,6 +33,8 @@ import { Queue } from 'bullmq';
 import { createByteCountingStream } from '../../../common/helpers/utils';
 import { getMimeType, sanitizeFileName } from '../../../common/helpers';
 import * as path from 'path';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EventName } from '../../../common/events/event.contants';
 
 @Injectable()
 export class AttachmentService {
@@ -41,6 +47,7 @@ export class AttachmentService {
     private readonly spaceRepo: SpaceRepo,
     @InjectKysely() private readonly db: KyselyDB,
     @InjectQueue(QueueName.ATTACHMENT_QUEUE) private attachmentQueue: Queue,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async uploadFile(opts: {
@@ -196,10 +203,21 @@ export class AttachmentService {
     }
     await this.storageService.delete(attachment.filePath);
     await this.attachmentRepo.deleteAttachmentById(attachment.id);
+    if (attachment.pageId && attachment.workspaceId) {
+      this.eventEmitter.emit(EventName.ATTACHMENT_CONTENT_UPDATED, {
+        attachmentId: attachment.id,
+        pageIds: [attachment.pageId],
+        workspaceId: attachment.workspaceId,
+      });
+    }
   }
 
   private async queueContentIndex(attachment: Attachment): Promise<void> {
-    if (!['.pdf', '.docx'].includes(attachment.fileExt.toLowerCase())) {
+    if (
+      !SUPPORTED_ATTACHMENT_TEXT_EXTENSIONS.has(
+        attachment.fileExt.toLowerCase(),
+      )
+    ) {
       return;
     }
     await this.attachmentQueue.add(
