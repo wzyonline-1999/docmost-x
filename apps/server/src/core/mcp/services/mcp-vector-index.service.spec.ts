@@ -1,9 +1,15 @@
 import type { KyselyDB } from '@docmost/db/types/kysely.types';
 import type { Queue } from 'bullmq';
+import { CamelCasePlugin, Kysely } from 'kysely';
+import { PostgresJSDialect } from 'kysely-postgres-js';
+import * as postgres from 'postgres';
 import type { EnvironmentService } from '../../../integrations/environment/environment.service';
 import type { McpEmbeddingService } from './mcp-embedding.service';
 import type { McpVectorEligibilityService } from './mcp-vector-eligibility.service';
-import { McpVectorIndexService } from './mcp-vector-index.service';
+import {
+  buildEmbeddingDimensionContractQuery,
+  McpVectorIndexService,
+} from './mcp-vector-index.service';
 import type { McpVectorTextService } from './mcp-vector-text.service';
 
 describe('McpVectorIndexService permission eligibility', () => {
@@ -206,6 +212,29 @@ describe('McpVectorIndexService permission eligibility', () => {
       'must be vector(1536)',
     );
     expect(vectorQueue.add).not.toHaveBeenCalled();
+  });
+
+  it('compiles the vector dimension alias for the CamelCase plugin', async () => {
+    const postgresClient = postgres(
+      'postgres://docmost:docmost@127.0.0.1:5432/docmost',
+      { max: 1 },
+    );
+    const compileDb = new Kysely<unknown>({
+      dialect: new PostgresJSDialect({ postgres: postgresClient }),
+      plugins: [new CamelCasePlugin()],
+    });
+
+    try {
+      const compiled = buildEmbeddingDimensionContractQuery(
+        compileDb as unknown as KyselyDB,
+      ).compile();
+
+      expect(compiled.sql).toContain('AS declared_type');
+      expect(compiled.sql).toContain('select "declared_type"');
+      expect(compiled.sql).not.toContain('AS "declaredType"');
+    } finally {
+      await compileDb.destroy();
+    }
   });
 
   it('rejects unsupported configured dimensions before querying jobs', async () => {

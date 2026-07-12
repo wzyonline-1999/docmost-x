@@ -63,6 +63,21 @@ type EnqueuePageOptions = {
 export const AUTO_INDEX_DELAY_MS = 1000;
 const MAX_BATCH_INDEX_LIMIT = 1000;
 
+export function buildEmbeddingDimensionContractQuery(db: KyselyDB) {
+  return db
+    .selectFrom(
+      sql<{ declaredType: string | null }>`(
+        SELECT format_type(attribute.atttypid, attribute.atttypmod) AS declared_type
+        FROM pg_attribute AS attribute
+        WHERE attribute.attrelid = to_regclass('docmost_mcp_chunks')
+          AND attribute.attname = 'embedding'
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped
+      )`.as('vectorDimensionContract'),
+    )
+    .select('declaredType');
+}
+
 @Injectable()
 export class McpVectorIndexService implements OnModuleInit {
   private readonly logger = new Logger(McpVectorIndexService.name);
@@ -1225,19 +1240,9 @@ export class McpVectorIndexService implements OnModuleInit {
       );
     }
 
-    const contract = await this.db
-      .selectFrom(
-        sql<{ declaredType: string | null }>`(
-          SELECT format_type(attribute.atttypid, attribute.atttypmod) AS "declaredType"
-          FROM pg_attribute AS attribute
-          WHERE attribute.attrelid = to_regclass('docmost_mcp_chunks')
-            AND attribute.attname = 'embedding'
-            AND attribute.attnum > 0
-            AND NOT attribute.attisdropped
-        )`.as('vectorDimensionContract'),
-      )
-      .select('declaredType')
-      .executeTakeFirst();
+    const contract = await buildEmbeddingDimensionContractQuery(
+      this.db,
+    ).executeTakeFirst();
     if (contract?.declaredType !== 'vector(1536)') {
       throw new Error(
         `docmost_mcp_chunks.embedding must be vector(1536), found ${contract?.declaredType ?? 'missing'}. Apply the matching database migration before enabling vector search.`,
