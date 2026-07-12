@@ -79,6 +79,13 @@ driver supports it. `upload_attachment` accepts strict Base64 content up to
 512 KiB so the JSON request stays below the server body limit. Use the Docmost
 web upload for larger files until the separate presigned PUT flow is available.
 
+TXT, Markdown, DOCX, and PDF page attachments are extracted asynchronously and
+included in semantic and hybrid MCP search results. Search results identify
+attachment-backed matches through `contentSource`; keyword-only search remains
+page-text only. Text indexing rejects source files larger than 25 MiB, stores at
+most 500,000 extracted characters per attachment, and indexes at most 1,000,000
+attachment characters per page.
+
 ## Canary sequence
 
 1. Boot with `MCP_ENABLED=false` and `VECTOR_SEARCH_ENABLED=false`.

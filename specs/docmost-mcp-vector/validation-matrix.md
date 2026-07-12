@@ -17,7 +17,7 @@ verified_at: 2026-07-12
 - Coverage gate: the seven core security services exceed 90% line and 80% branch coverage.
 - Repository hygiene: generated browser snapshots were removed and the high-entropy secret scan returned no matches.
 - Dark boot: the production build starts without embedding credentials when both feature flags are false, and `/mcp` rejects bearer requests as disabled.
-- Production stable release: the Hong Kong VPS runs `docmost-mcp-vector-v0.2.2` with `MCP_ENABLED=true` and `VECTOR_SEARCH_ENABLED=true`; image digest `sha256:0a8b7fccf656fdebc21542ce0a1e5558b666317111e043e9c14aafa2469e1f90` is an offline derivative of the checksum-verified `v0.2.1` image with the compiled artifact from commit `b5a8020`.
+- Production stable release: the Hong Kong VPS runs `docmost-mcp-vector-v0.3.0` with `MCP_ENABLED=true` and `VECTOR_SEARCH_ENABLED=true`; image digest `sha256:8d5073c0eb526eb507ebe013cebe5fed48e8b9ebb21b3b85a0b2522d92ed2166` is a checksum-verified offline derivative of `v0.2.2` built from commit `2226e7e`.
 - Production Codex: isolated `codex-cli 0.144.0-alpha.4` used official ChatGPT authentication and only the Docmost MCP to complete `search_docs` and `get_page` against the canary page.
 - Production observability: Prometheus scrapes the Token-protected endpoint over the private Docmost Docker network, all seven MCP alert rules are healthy and inactive, and Grafana provisions the `Docmost MCP` dashboard.
 - T18 is complete: the single-user owner explicitly selected direct stable release, and health, authenticated MCP initialize, monitoring, logs, rollback, vector indexing, and production retrieval evidence all passed.
@@ -27,6 +27,7 @@ verified_at: 2026-07-12
 - Production vector provider: SiliconFlow `Qwen/Qwen3-Embedding-8B` returned valid 1536-dimensional vectors; the canary space indexed one active page into one active chunk with zero invalid dimensions.
 - Production vector retrieval: public HTTPS MCP keyword, Chinese cross-language semantic, and hybrid searches all returned the expected canary page. Semantic similarity was `0.672905`; hybrid final score was `0.749429`.
 - Production vector observability: three embedding calls and three inputs succeeded in `1.813793` seconds total, no failed embedding series was present, both permission/reindex audit events exist, and the healthy container has zero restarts, zero recent errors, and zero recent warnings.
+- Production attachment indexing: disposable TXT, Markdown, DOCX, and PDF uploads all exposed extracted text, produced four source-aware attachment chunks plus one page chunk, and returned `contentSource.type=attachment` from both semantic and hybrid search. Cleanup left zero active pages, attachments, chunks, or jobs.
 
 ## Case Evidence
 
@@ -116,6 +117,7 @@ verified_at: 2026-07-12
 | G-82 | PASS   | Production vector    | `v0.2.2` starts with the 1536-dimension contract, indexes the canary page, and persists one valid Qwen3 embedding chunk.                  |
 | G-83 | PASS   | Production retrieval | Public MCP keyword, Chinese cross-language semantic, and hybrid searches all return the expected canary page without warnings.            |
 | G-84 | PASS   | Vector observability | Provider metrics report three successes and no failures; permission/reindex audits exist and recent application logs are clean.           |
+| G-85 | PASS   | Attachment indexing  | Four-format extraction, source-aware semantic/hybrid search, five chunks, and zero-residue cleanup passed on `v0.3.0`.                    |
 
 ## Repeatable Commands
 
