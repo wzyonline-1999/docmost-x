@@ -33,6 +33,18 @@
   overflow-wrap: anywhere;
 }
 
+.permissionHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-xs);
+}
+
+.permissionColumnHeader {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+
 @media (max-width: 48em) {
   .filters {
     grid-template-columns: 1fr;

@@ -15,35 +15,26 @@ import { useMemo, useState } from "react";
 import { useGetSpacesQuery } from "@/features/space/queries/space-query";
 import {
   useDeleteMcpPermissionMutation,
+  useBulkUpsertMcpPermissionsMutation,
   useMcpClientsQuery,
   useUpsertMcpPermissionMutation,
 } from "@/features/mcp/queries/mcp-query";
+import { IMcpSpacePermission } from "@/features/mcp/types/mcp.types";
 import {
-  IMcpSpacePermission,
-  McpPermissionField,
-} from "@/features/mcp/types/mcp.types";
+  buildPermissionUpdates,
+  getPermissionSelectionState,
+  getPermissionValues,
+  MCP_PERMISSION_COLUMNS,
+  McpPermissionValues,
+} from "@/features/mcp/utils/mcp-permission-utils";
 import NoTableResults from "@/components/common/no-table-results";
 import classes from "./mcp-settings.module.css";
-
-const permissionColumns: Array<{
-  field: McpPermissionField;
-  label: string;
-}> = [
-  { field: "canSearch", label: "Search" },
-  { field: "canSemanticSearch", label: "Semantic" },
-  { field: "canRead", label: "Read" },
-  { field: "canCreate", label: "Create" },
-  { field: "canUpdate", label: "Update" },
-  { field: "canAppend", label: "Append" },
-  { field: "canDelete", label: "Delete" },
-  { field: "canRestore", label: "Restore" },
-  { field: "canIndex", label: "Index" },
-];
 
 export function McpPermissions() {
   const clientsQuery = useMcpClientsQuery({ limit: 100 });
   const spacesQuery = useGetSpacesQuery({ limit: 100 });
   const upsertMutation = useUpsertMcpPermissionMutation();
+  const bulkUpsertMutation = useBulkUpsertMcpPermissionsMutation();
   const deleteMutation = useDeleteMcpPermissionMutation();
   const [clientId, setClientId] = useState<string | null>(null);
   const selectedClientId = clientId ?? clientsQuery.data?.items[0]?.id ?? null;
@@ -65,23 +56,60 @@ export function McpPermissions() {
       value: item.id,
       label: item.name,
     })) ?? [];
+  const spaces = spacesQuery.data?.items ?? [];
+  const isMutating = upsertMutation.isPending || bulkUpsertMutation.isPending;
+  const allSelection = getPermissionSelectionState(
+    spaces.flatMap((space) => {
+      const permission = permissionBySpace.get(space.id);
+      return MCP_PERMISSION_COLUMNS.map(
+        (column) => permission?.[column.field] ?? false,
+      );
+    }),
+  );
+  const columnSelection = new Map(
+    MCP_PERMISSION_COLUMNS.map((column) => [
+      column.field,
+      getPermissionSelectionState(
+        spaces.map(
+          (space) => permissionBySpace.get(space.id)?.[column.field] ?? false,
+        ),
+      ),
+    ]),
+  );
 
   const togglePermission = (
     spaceId: string,
-    field: McpPermissionField,
+    field: keyof McpPermissionValues,
     checked: boolean,
   ) => {
     if (!selectedClientId) return;
     const current = permissionBySpace.get(spaceId);
-    const values = permissionColumns.reduce(
-      (result, column) => {
-        result[column.field] = current?.[column.field] ?? false;
-        return result;
-      },
-      {} as Record<McpPermissionField, boolean>,
-    );
+    const values = getPermissionValues(current);
     values[field] = checked;
     upsertMutation.mutate({ clientId: selectedClientId, spaceId, ...values });
+  };
+
+  const setPermissions = (changes: Partial<McpPermissionValues>) => {
+    if (!selectedClientId) return;
+    const updates = buildPermissionUpdates(
+      selectedClientId,
+      spaces.map((space) => ({
+        id: space.id,
+        permission: permissionBySpace.get(space.id),
+      })),
+      changes,
+    );
+
+    if (updates.length) bulkUpsertMutation.mutate(updates);
+  };
+
+  const toggleAllPermissions = (checked: boolean) => {
+    setPermissions(
+      MCP_PERMISSION_COLUMNS.reduce((result, column) => {
+        result[column.field] = checked;
+        return result;
+      }, {} as McpPermissionValues),
+    );
   };
 
   const confirmRemove = (
@@ -134,16 +162,55 @@ export function McpPermissions() {
         </Text>
       </div>
 
-      <Table.ScrollContainer minWidth={1080}>
+      <Table.ScrollContainer minWidth={1080} type="native">
         <Table verticalSpacing="sm" highlightOnHover layout="fixed">
           <Table.Thead>
             <Table.Tr>
-              <Table.Th w={220}>Space</Table.Th>
-              {permissionColumns.map((column) => (
-                <Table.Th key={column.field} ta="center" w={88}>
-                  {column.label}
-                </Table.Th>
-              ))}
+              <Table.Th w={220}>
+                <div className={classes.permissionHeader}>
+                  <Tooltip label="Select or clear all permissions">
+                    <Checkbox
+                      aria-label="Select or clear all permissions"
+                      checked={allSelection.checked}
+                      indeterminate={allSelection.indeterminate}
+                      disabled={
+                        !selectedClientId || !spaces.length || isMutating
+                      }
+                      onChange={(event) =>
+                        toggleAllPermissions(event.currentTarget.checked)
+                      }
+                    />
+                  </Tooltip>
+                  <span>Space</span>
+                </div>
+              </Table.Th>
+              {MCP_PERMISSION_COLUMNS.map((column) => {
+                const selection = columnSelection.get(column.field);
+                return (
+                  <Table.Th key={column.field} ta="center" w={88}>
+                    <div className={classes.permissionColumnHeader}>
+                      <span>{column.label}</span>
+                      <Tooltip
+                        label={`Select or clear all ${column.label} permissions`}
+                      >
+                        <Checkbox
+                          aria-label={`Select or clear all ${column.label} permissions`}
+                          checked={selection?.checked ?? false}
+                          indeterminate={selection?.indeterminate ?? false}
+                          disabled={
+                            !selectedClientId || !spaces.length || isMutating
+                          }
+                          onChange={(event) =>
+                            setPermissions({
+                              [column.field]: event.currentTarget.checked,
+                            })
+                          }
+                        />
+                      </Tooltip>
+                    </div>
+                  </Table.Th>
+                );
+              })}
               <Table.Th w={56}>
                 <VisuallyHidden>Actions</VisuallyHidden>
               </Table.Th>
@@ -169,14 +236,12 @@ export function McpPermissions() {
                         {space.slug}
                       </Text>
                     </Table.Td>
-                    {permissionColumns.map((column) => (
+                    {MCP_PERMISSION_COLUMNS.map((column) => (
                       <Table.Td key={column.field} ta="center">
                         <Checkbox
                           aria-label={`${column.label} permission for ${space.name}`}
                           checked={permission?.[column.field] ?? false}
-                          disabled={
-                            !selectedClientId || upsertMutation.isPending
-                          }
+                          disabled={!selectedClientId || isMutating}
                           onChange={(event) =>
                             togglePermission(
                               space.id,

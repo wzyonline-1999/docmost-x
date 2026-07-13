@@ -7,6 +7,7 @@ import {
   IMcpClientTokenResponse,
   IMcpSpacePermission,
   McpClientStatus,
+  McpSpacePermissionInput,
 } from "@/features/mcp/types/mcp.types";
 
 export async function getMcpClients(params?: {
@@ -53,10 +54,7 @@ export async function rotateMcpClientToken(
 }
 
 export async function upsertMcpPermission(
-  permission: Partial<IMcpSpacePermission> & {
-    clientId: string;
-    spaceId: string;
-  },
+  permission: McpSpacePermissionInput,
 ): Promise<IMcpSpacePermission> {
   const response = await api.post<IMcpSpacePermission>(
     "/mcp/admin/clients/permissions/upsert",

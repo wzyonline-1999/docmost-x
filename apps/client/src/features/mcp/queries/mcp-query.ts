@@ -16,6 +16,7 @@ import {
   IMcpClientInput,
   IMcpSpacePermission,
   McpClientStatus,
+  McpSpacePermissionInput,
 } from "@/features/mcp/types/mcp.types";
 
 const showMutationError = (error: Error) => {
@@ -109,6 +110,30 @@ export function useUpsertMcpPermissionMutation() {
       },
     ) => upsertMcpPermission(permission),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
+    },
+    onError: showMutationError,
+  });
+}
+
+export function useBulkUpsertMcpPermissionsMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (permissions: McpSpacePermissionInput[]) => {
+      const results = await Promise.allSettled(
+        permissions.map(upsertMcpPermission),
+      );
+      const failure = results.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
+      );
+
+      if (failure) throw failure.reason;
+      return results.map((result) =>
+        result.status === "fulfilled" ? result.value : undefined,
+      );
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
     },
     onError: showMutationError,

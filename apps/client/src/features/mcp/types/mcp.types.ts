@@ -29,6 +29,11 @@ export interface IMcpSpacePermission {
   updatedAt: string;
 }
 
+export type McpSpacePermissionInput = {
+  clientId: string;
+  spaceId: string;
+} & Partial<Record<McpPermissionField, boolean>>;
+
 export interface IMcpClient {
   id: string;
   workspaceId: string;
