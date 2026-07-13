@@ -237,36 +237,40 @@ export function McpPermissions() {
                       </Text>
                     </Table.Td>
                     {MCP_PERMISSION_COLUMNS.map((column) => (
-                      <Table.Td key={column.field} ta="center">
-                        <Checkbox
-                          aria-label={`${column.label} permission for ${space.name}`}
-                          checked={permission?.[column.field] ?? false}
-                          disabled={!selectedClientId || isMutating}
-                          onChange={(event) =>
-                            togglePermission(
-                              space.id,
-                              column.field,
-                              event.currentTarget.checked,
-                            )
-                          }
-                        />
+                      <Table.Td key={column.field}>
+                        <div className={classes.permissionCell}>
+                          <Checkbox
+                            aria-label={`${column.label} permission for ${space.name}`}
+                            checked={permission?.[column.field] ?? false}
+                            disabled={!selectedClientId || isMutating}
+                            onChange={(event) =>
+                              togglePermission(
+                                space.id,
+                                column.field,
+                                event.currentTarget.checked,
+                              )
+                            }
+                          />
+                        </div>
                       </Table.Td>
                     ))}
                     <Table.Td>
-                      {permission && (
-                        <Tooltip label="Remove all permissions">
-                          <ActionIcon
-                            variant="subtle"
-                            color="red"
-                            aria-label={`Remove all permissions for ${space.name}`}
-                            onClick={() =>
-                              confirmRemove(permission, space.name)
-                            }
-                          >
-                            <IconTrash size={17} />
-                          </ActionIcon>
-                        </Tooltip>
-                      )}
+                      <div className={classes.permissionCell}>
+                        {permission && (
+                          <Tooltip label="Remove all permissions">
+                            <ActionIcon
+                              variant="subtle"
+                              color="red"
+                              aria-label={`Remove all permissions for ${space.name}`}
+                              onClick={() =>
+                                confirmRemove(permission, space.name)
+                              }
+                            >
+                              <IconTrash size={17} />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
+                      </div>
                     </Table.Td>
                   </Table.Tr>
                 );

@@ -2,6 +2,7 @@ import { MantineProvider } from "@mantine/core";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpPermissions } from "./mcp-permissions";
+import classes from "./mcp-settings.module.css";
 
 const mocks = vi.hoisted(() => ({
   bulkMutate: vi.fn(),
@@ -139,5 +140,15 @@ describe("McpPermissions", () => {
         canRead: false,
       }),
     ]);
+  });
+
+  it("centers every row control in a full-width wrapper", () => {
+    const { container } = renderPermissions();
+
+    const controlCells = container.querySelectorAll(
+      `tbody .${classes.permissionCell}`,
+    );
+
+    expect(controlCells).toHaveLength(20);
   });
 });

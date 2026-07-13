@@ -45,6 +45,13 @@
   gap: 6px;
 }
 
+.permissionCell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
 @media (max-width: 48em) {
   .filters {
     grid-template-columns: 1fr;
