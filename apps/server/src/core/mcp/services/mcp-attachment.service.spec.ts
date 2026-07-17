@@ -303,7 +303,7 @@ describe('McpAttachmentService', () => {
     });
 
     expect(harness.storageService.delete).toHaveBeenCalledWith(
-      'workspace-1/files/44444444-4444-4444-8444-444444444444/readme.txt',
+      'workspace-1/files/44444444-4444-4444-8444-444444444444/content.txt',
     );
     expect(result).toEqual({ outcome: 'retry' });
   });

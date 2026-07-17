@@ -7,7 +7,7 @@ describe('AttachmentService MCP buffer operations', () => {
     id: '11111111-1111-4111-8111-111111111111',
     type: AttachmentType.File,
     filePath:
-      'workspace-1/files/11111111-1111-4111-8111-111111111111/report.pdf',
+      'workspace-1/files/11111111-1111-4111-8111-111111111111/content.pdf',
     fileName: 'report.pdf',
     fileSize: 4,
     fileExt: '.pdf',
@@ -107,7 +107,36 @@ describe('AttachmentService MCP buffer operations', () => {
       }),
     ).rejects.toThrow('database unavailable');
     expect(harness.storageService.delete).toHaveBeenCalledWith(
-      'workspace-1/files/11111111-1111-4111-8111-111111111111/report.txt',
+      'workspace-1/files/11111111-1111-4111-8111-111111111111/content.txt',
+    );
+  });
+
+  it('keeps a Unicode display name out of the storage object key', async () => {
+    const harness = createHarness();
+
+    await harness.service.uploadBufferFile({
+      buffer: Buffer.from('image'),
+      fileName: '岗位发布业务模型图.png',
+      pageId: 'page-1',
+      userId: 'user-1',
+      spaceId: 'space-1',
+      workspaceId: 'workspace-1',
+      attachmentId: attachment.id,
+    });
+
+    expect(harness.storageService.upload).toHaveBeenCalledWith(
+      'workspace-1/files/11111111-1111-4111-8111-111111111111/content.png',
+      expect.any(Buffer),
+    );
+    expect(harness.attachmentRepo.insertAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filePath:
+          'workspace-1/files/11111111-1111-4111-8111-111111111111/content.png',
+        fileName: '岗位发布业务模型图.png',
+        fileExt: '.png',
+        mimeType: 'image/png',
+      }),
+      undefined,
     );
   });
 

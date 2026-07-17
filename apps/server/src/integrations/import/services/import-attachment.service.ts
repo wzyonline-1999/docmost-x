@@ -10,8 +10,7 @@ import { Readable } from 'stream';
 import { getMimeType, sanitizeFileName } from '../../../common/helpers';
 import { v7 } from 'uuid';
 import { FileTask } from '@docmost/db/types/entity.types';
-import { getAttachmentFolderPath } from '../../../core/attachment/attachment.utils';
-import { AttachmentType } from '../../../core/attachment/attachment.constants';
+import { getAttachmentStorageFilePath } from '../../../core/attachment/attachment.utils';
 import { unwrapFromParagraph } from '../utils/import-formatter';
 import { resolveRelativeAttachmentPath } from '../utils/import.utils';
 import { imageDimensionsFromData } from 'image-dimensions';
@@ -128,10 +127,11 @@ export class ImportAttachmentService {
         // Generate file details - always use "diagram.drawio.svg" as filename
         const attachmentId = v7();
         const fileName = 'diagram.drawio.svg';
-        const storageFilePath = `${getAttachmentFolderPath(
-          AttachmentType.File,
+        const storageFilePath = getAttachmentStorageFilePath(
           fileTask.workspaceId,
-        )}/${attachmentId}/${fileName}`;
+          attachmentId,
+          '.svg',
+        );
         const apiFilePath = `/api/files/${attachmentId}/${fileName}`;
 
         // Upload the SVG file
@@ -209,7 +209,10 @@ export class ImportAttachmentService {
         const dir = path.posix.dirname(relPath);
         const aliasKey = `${dir}/${attachment.fileName}`;
         if (!attachmentCandidates.has(aliasKey)) {
-          attachmentCandidates.set(aliasKey, attachmentCandidates.get(relPath)!);
+          attachmentCandidates.set(
+            aliasKey,
+            attachmentCandidates.get(relPath)!,
+          );
           attachmentNameByRelPath.set(aliasKey, attachment.fileName);
         }
       }
@@ -226,10 +229,11 @@ export class ImportAttachmentService {
       const fileNameWithExt =
         sanitizeFileName(path.basename(baseName, ext)) + ext.toLowerCase();
 
-      const storageFilePath = `${getAttachmentFolderPath(
-        AttachmentType.File,
+      const storageFilePath = getAttachmentStorageFilePath(
         fileTask.workspaceId,
-      )}/${attachmentId}/${fileNameWithExt}`;
+        attachmentId,
+        ext,
+      );
 
       const apiFilePath = `/api/files/${attachmentId}/${fileNameWithExt}`;
 
@@ -377,9 +381,7 @@ export class ImportAttachmentService {
 
       const { attachmentId, apiFilePath } = processFile(relPath);
 
-      $aud
-        .attr('src', apiFilePath)
-        .attr('data-attachment-id', attachmentId);
+      $aud.attr('src', apiFilePath).attr('data-attachment-id', attachmentId);
 
       unwrapFromParagraph($, $aud);
     }
@@ -450,7 +452,15 @@ export class ImportAttachmentService {
       const { attachmentId, apiFilePath, abs } = processFile(relPath);
       const ext = path.extname(relPath).toLowerCase();
 
-      const audioExtensions = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.webm', '.flac', '.aac']);
+      const audioExtensions = new Set([
+        '.mp3',
+        '.wav',
+        '.ogg',
+        '.m4a',
+        '.webm',
+        '.flac',
+        '.aac',
+      ]);
 
       if (ext === '.pdf') {
         const $pdf = $('<div>')

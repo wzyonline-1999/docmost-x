@@ -9,10 +9,11 @@ import type { Attachment, Page, User } from '@docmost/db/types/entity.types';
 import { AttachmentRepo } from '@docmost/db/repos/attachment/attachment.repo';
 import { PageRepo } from '@docmost/db/repos/page/page.repo';
 import { AttachmentType } from '../../attachment/attachment.constants';
-import { getAttachmentFolderPath } from '../../attachment/attachment.utils';
+import { getAttachmentStorageFilePath } from '../../attachment/attachment.utils';
 import { AttachmentService } from '../../attachment/services/attachment.service';
 import { StorageService } from '../../../integrations/storage/storage.service';
 import { sanitizeFileName } from '../../../common/helpers';
+import * as path from 'path';
 import type { McpToolContext } from '../types/mcp-tool.types';
 import { McpActorAccessService } from './mcp-actor-access.service';
 import { McpAuditService } from './mcp-audit.service';
@@ -422,7 +423,11 @@ export class McpAttachmentService {
     }
     if (!attachment) {
       const fileName = sanitizeFileName(target.fileName).slice(0, 255);
-      const filePath = `${getAttachmentFolderPath(AttachmentType.File, context.client.workspaceId)}/${record.resourceId}/${fileName}`;
+      const filePath = getAttachmentStorageFilePath(
+        context.client.workspaceId,
+        record.resourceId,
+        path.extname(fileName),
+      );
       await this.storageService.delete(filePath).catch(() => undefined);
       return { outcome: 'retry' as const };
     }

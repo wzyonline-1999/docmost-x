@@ -9,6 +9,7 @@ import { StorageService } from '../../../integrations/storage/storage.service';
 import { MultipartFile } from '@fastify/multipart';
 import {
   getAttachmentFolderPath,
+  getAttachmentStorageFilePath,
   PreparedFile,
   prepareFile,
   validateFileType,
@@ -65,6 +66,7 @@ export class AttachmentService {
 
     let isUpdate = false;
     let attachmentId = null;
+    let existingFilePath: string | null = null;
 
     // passing attachmentId to allow for updating diagrams
     // instead of creating new files for each save
@@ -86,12 +88,19 @@ export class AttachmentService {
         throw new BadRequestException('File attachment does not match');
       }
       attachmentId = opts.attachmentId;
+      existingFilePath = existingAttachment.filePath;
       isUpdate = true;
     } else {
       attachmentId = uuid7();
     }
 
-    const filePath = `${getAttachmentFolderPath(AttachmentType.File, workspaceId)}/${attachmentId}/${preparedFile.fileName}`;
+    const filePath =
+      existingFilePath ??
+      getAttachmentStorageFilePath(
+        workspaceId,
+        attachmentId,
+        preparedFile.fileExtension,
+      );
 
     const { stream, getBytesRead } = createByteCountingStream(
       preparedFile.multiPartFile.file,
@@ -154,7 +163,11 @@ export class AttachmentService {
     }
 
     const attachmentId = opts.attachmentId ?? uuid7();
-    const filePath = `${getAttachmentFolderPath(AttachmentType.File, opts.workspaceId)}/${attachmentId}/${fileName}`;
+    const filePath = getAttachmentStorageFilePath(
+      opts.workspaceId,
+      attachmentId,
+      fileExtension,
+    );
     const preparedFile: PreparedFile = {
       buffer: opts.buffer,
       fileName,

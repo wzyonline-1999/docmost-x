@@ -78,4 +78,17 @@ export function getAttachmentFolderPath(
   }
 }
 
+export function getAttachmentStorageFilePath(
+  workspaceId: string,
+  attachmentId: string,
+  fileExtension: string,
+): string {
+  const normalizedExtension = fileExtension.toLowerCase();
+  const storageExtension = /^\.[a-z0-9]{1,16}$/.test(normalizedExtension)
+    ? normalizedExtension
+    : '';
+
+  return `${getAttachmentFolderPath(AttachmentType.File, workspaceId)}/${attachmentId}/content${storageExtension}`;
+}
+
 export const validAttachmentTypes = Object.values(AttachmentType);
