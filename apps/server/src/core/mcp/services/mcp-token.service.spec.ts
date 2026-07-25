@@ -59,6 +59,8 @@ describe('McpTokenService', () => {
       globalScopes: {},
       actorUserId: null,
       createdById: 'admin-1',
+      ownerUserId: 'admin-1',
+      scope: 'personal',
       expiresAt: null,
       lastUsedAt: null,
       createdAt: new Date(),
@@ -101,7 +103,7 @@ describe('McpTokenService', () => {
     const result = await service.createClient({
       workspaceId: 'workspace-1',
       name: 'Codex',
-      actorUserId: 'actor-1',
+      actorUserId: 'admin-1',
       createdById: 'admin-1',
       globalScopes: { read: true },
     });
@@ -113,11 +115,28 @@ describe('McpTokenService', () => {
         workspaceId: 'workspace-1',
         tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
         tokenLastFour: result.token.slice(-4),
+        ownerUserId: 'admin-1',
+        scope: 'personal',
       }),
     );
     expect(JSON.stringify(insertQuery.values.mock.calls)).not.toContain(
       result.token,
     );
+  });
+
+  it('rejects an explicitly personal client that impersonates another user', async () => {
+    await expect(
+      service.createClient({
+        workspaceId: 'workspace-1',
+        name: 'Impersonating client',
+        scope: 'personal',
+        ownerUserId: 'admin-1',
+        actorUserId: 'actor-1',
+        createdById: 'admin-1',
+      }),
+    ).rejects.toThrow('Personal MCP clients must act as their owner');
+
+    expect(db.insertInto).not.toHaveBeenCalled();
   });
 
   it('rejects requests while MCP is disabled before querying clients', async () => {

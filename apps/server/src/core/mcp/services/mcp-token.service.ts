@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
@@ -63,6 +64,23 @@ export class McpTokenService {
 
   async createClient(input: CreateMcpClientInput): Promise<CreatedMcpClient> {
     const token = this.generateToken();
+    const scope =
+      input.scope ??
+      (input.createdById && input.actorUserId === input.createdById
+        ? 'personal'
+        : 'workspace');
+    const ownerUserId =
+      scope === 'personal'
+        ? (input.ownerUserId ?? input.createdById ?? null)
+        : null;
+    if (
+      scope === 'personal' &&
+      (!ownerUserId || input.actorUserId !== ownerUserId)
+    ) {
+      throw new BadRequestException(
+        'Personal MCP clients must act as their owner',
+      );
+    }
     const client = await this.db
       .insertInto('mcpClients')
       .values({
@@ -74,6 +92,8 @@ export class McpTokenService {
         globalScopes: input.globalScopes ?? {},
         actorUserId: input.actorUserId ?? null,
         createdById: input.createdById ?? null,
+        ownerUserId,
+        scope,
         expiresAt: input.expiresAt ?? null,
       })
       .returningAll()

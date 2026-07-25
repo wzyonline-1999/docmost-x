@@ -12,7 +12,7 @@ verified_at: 2026-07-12
 ## Gate Summary
 
 - T14 scope: every P0/P1 case in `G-01` through `G-59` has repository-owned automated evidence.
-- T15 scope: the disposable PostgreSQL rehearsal passed in the private `docmost` schema with `latest -> down x5 -> latest`.
+- T15 scope: the disposable PostgreSQL rehearsal passed in the private `docmost` schema with `latest -> down x6 -> latest`.
 - T17 scope: real `codex-cli 0.142.5` completed search/read, CRUD, idempotency replay, rate-limit reset, audit verification, and token rotation against a production build.
 - Coverage gate: the seven core security services exceed 90% line and 80% branch coverage.
 - Repository hygiene: generated browser snapshots were removed and the high-entropy secret scan returned no matches.
@@ -34,7 +34,7 @@ verified_at: 2026-07-12
 
 | ID   | Status | Layer                | Repository evidence                                                                                                                       |
 | ---- | ------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| G-01 | PASS   | PostgreSQL           | `apps/server/test/mcp-migration-rehearsal.ts` removes all five MCP migrations and asserts MCP tables are absent while base tables remain. |
+| G-01 | PASS   | PostgreSQL           | `apps/server/test/mcp-migration-rehearsal.ts` removes all six MCP migrations and asserts MCP tables are absent while base tables remain.  |
 | G-02 | PASS   | PostgreSQL           | The same rehearsal reapplies latest migrations, checks tables/indexes/constraints/vector typmod, and preserves sentinel data.             |
 | G-03 | PASS   | Unit                 | `mcp-permission.service.spec.ts` masks cross-workspace pages; `mcp-tool.service.spec.ts` masks native read denials.                       |
 | G-04 | PASS   | Unit                 | `mcp-tool.service.spec.ts` filters mixed allowed/denied search scopes and scans only actor-readable pages.                                |

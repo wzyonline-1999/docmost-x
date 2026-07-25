@@ -175,7 +175,17 @@ export function McpClientList({
                       {client.name}
                     </Text>
                     <Text size="xs" c="dimmed">
-                      Token ending in {client.tokenLastFour}
+                      {client.scope === "workspace"
+                        ? "Workspace client"
+                        : `Personal client${
+                            client.ownerUserId
+                              ? ` owned by ${
+                                  actors.get(client.ownerUserId) ??
+                                  "unknown member"
+                                }`
+                              : ""
+                          }`}
+                      {" - "}token ending in {client.tokenLastFour}
                     </Text>
                   </Table.Td>
                   <Table.Td>
@@ -211,49 +221,59 @@ export function McpClientList({
                         </Tooltip>
                       </Menu.Target>
                       <Menu.Dropdown>
-                        <Menu.Item
-                          leftSection={<IconEdit size={16} />}
-                          onClick={() => onEdit(client)}
-                        >
-                          Edit
-                        </Menu.Item>
-                        <Menu.Item
-                          leftSection={<IconKey size={16} />}
-                          onClick={() => confirmRotate(client)}
-                        >
-                          Rotate token
-                        </Menu.Item>
-                        {client.status === "active" && (
+                        {client.capabilities.canEdit && (
                           <Menu.Item
-                            leftSection={<IconUserOff size={16} />}
-                            color="orange"
-                            onClick={() => confirmDisable(client)}
+                            leftSection={<IconEdit size={16} />}
+                            onClick={() => onEdit(client)}
                           >
-                            Disable
+                            Edit
                           </Menu.Item>
                         )}
-                        {client.status === "disabled" && (
+                        {client.capabilities.canRotateToken && (
                           <Menu.Item
-                            leftSection={<IconPlayerPlay size={16} />}
-                            onClick={() =>
-                              updateMutation.mutate({
-                                clientId: client.id,
-                                name: client.name,
-                                status: "active",
-                              })
-                            }
+                            leftSection={<IconKey size={16} />}
+                            onClick={() => confirmRotate(client)}
                           >
-                            Enable
+                            Rotate token
                           </Menu.Item>
                         )}
-                        <Menu.Divider />
-                        <Menu.Item
-                          leftSection={<IconTrash size={16} />}
-                          color="red"
-                          onClick={() => confirmDelete(client)}
-                        >
-                          Delete
-                        </Menu.Item>
+                        {client.status === "active" &&
+                          client.capabilities.canDisable && (
+                            <Menu.Item
+                              leftSection={<IconUserOff size={16} />}
+                              color="orange"
+                              onClick={() => confirmDisable(client)}
+                            >
+                              Disable
+                            </Menu.Item>
+                          )}
+                        {client.status === "disabled" &&
+                          client.capabilities.canEdit && (
+                            <Menu.Item
+                              leftSection={<IconPlayerPlay size={16} />}
+                              onClick={() =>
+                                updateMutation.mutate({
+                                  clientId: client.id,
+                                  name: client.name,
+                                  status: "active",
+                                })
+                              }
+                            >
+                              Enable
+                            </Menu.Item>
+                          )}
+                        {client.capabilities.canDelete && (
+                          <>
+                            <Menu.Divider />
+                            <Menu.Item
+                              leftSection={<IconTrash size={16} />}
+                              color="red"
+                              onClick={() => confirmDelete(client)}
+                            >
+                              Delete
+                            </Menu.Item>
+                          </>
+                        )}
                       </Menu.Dropdown>
                     </Menu>
                   </Table.Td>

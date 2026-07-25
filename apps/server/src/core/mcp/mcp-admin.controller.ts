@@ -16,6 +16,7 @@ import {
   WorkspaceCaslAction,
   WorkspaceCaslSubject,
 } from '../casl/interfaces/workspace-ability.type';
+import { UserRole } from '../../common/helpers/types/permission';
 import {
   CreateMcpClientDto,
   DeleteMcpClientSpacePermissionDto,
@@ -27,6 +28,7 @@ import {
   UpsertMcpClientSpacePermissionDto,
 } from './dto/mcp-admin.dto';
 import { McpAdminService } from './services/mcp-admin.service';
+import type { McpAdminPrincipal } from './types/mcp.types';
 
 @UseGuards(JwtAuthGuard)
 @Controller('mcp/admin')
@@ -44,7 +46,11 @@ export class McpAdminController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     this.assertCanManageMcp(user, workspace);
-    return this.mcpAdminService.listClients(workspace.id, dto);
+    return this.mcpAdminService.listClients(
+      workspace.id,
+      this.toPrincipal(user),
+      dto,
+    );
   }
 
   @HttpCode(HttpStatus.OK)
@@ -55,7 +61,11 @@ export class McpAdminController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     this.assertCanManageMcp(user, workspace);
-    return this.mcpAdminService.getClient(workspace.id, dto.clientId);
+    return this.mcpAdminService.getClient(
+      workspace.id,
+      this.toPrincipal(user),
+      dto.clientId,
+    );
   }
 
   @HttpCode(HttpStatus.OK)
@@ -66,7 +76,11 @@ export class McpAdminController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     this.assertCanManageMcp(user, workspace);
-    return this.mcpAdminService.createClient(workspace.id, user.id, dto);
+    return this.mcpAdminService.createClient(
+      workspace.id,
+      this.toPrincipal(user),
+      dto,
+    );
   }
 
   @HttpCode(HttpStatus.OK)
@@ -77,7 +91,11 @@ export class McpAdminController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     this.assertCanManageMcp(user, workspace);
-    return this.mcpAdminService.updateClient(workspace.id, user.id, dto);
+    return this.mcpAdminService.updateClient(
+      workspace.id,
+      this.toPrincipal(user),
+      dto,
+    );
   }
 
   @HttpCode(HttpStatus.OK)
@@ -90,7 +108,7 @@ export class McpAdminController {
     this.assertCanManageMcp(user, workspace);
     return this.mcpAdminService.disableClient(
       workspace.id,
-      user.id,
+      this.toPrincipal(user),
       dto.clientId,
     );
   }
@@ -105,7 +123,7 @@ export class McpAdminController {
     this.assertCanManageMcp(user, workspace);
     return this.mcpAdminService.deleteClient(
       workspace.id,
-      user.id,
+      this.toPrincipal(user),
       dto.clientId,
     );
   }
@@ -120,7 +138,7 @@ export class McpAdminController {
     this.assertCanManageMcp(user, workspace);
     return this.mcpAdminService.rotateClientToken(
       workspace.id,
-      user.id,
+      this.toPrincipal(user),
       dto.clientId,
     );
   }
@@ -133,7 +151,11 @@ export class McpAdminController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     this.assertCanManageMcp(user, workspace);
-    return this.mcpAdminService.listAuditLogs(workspace.id, dto);
+    return this.mcpAdminService.listAuditLogs(
+      workspace.id,
+      this.toPrincipal(user),
+      dto,
+    );
   }
 
   @HttpCode(HttpStatus.OK)
@@ -146,7 +168,7 @@ export class McpAdminController {
     this.assertCanManageMcp(user, workspace);
     return this.mcpAdminService.upsertSpacePermission(
       workspace.id,
-      user.id,
+      this.toPrincipal(user),
       dto,
     );
   }
@@ -161,7 +183,7 @@ export class McpAdminController {
     this.assertCanManageMcp(user, workspace);
     return this.mcpAdminService.deleteSpacePermission(
       workspace.id,
-      user.id,
+      this.toPrincipal(user),
       dto,
     );
   }
@@ -171,5 +193,12 @@ export class McpAdminController {
     if (ability.cannot(WorkspaceCaslAction.Manage, WorkspaceCaslSubject.API)) {
       throw new ForbiddenException();
     }
+  }
+
+  private toPrincipal(user: User): McpAdminPrincipal {
+    return {
+      userId: user.id,
+      isWorkspaceOwner: user.role === UserRole.OWNER,
+    };
   }
 }

@@ -31,6 +31,12 @@ export const MCP_PERMISSION_COLUMN: Record<
 };
 
 export type McpClientStatus = 'active' | 'disabled' | 'expired';
+export type McpClientScope = 'personal' | 'workspace';
+
+export type McpAdminPrincipal = {
+  userId: string;
+  isWorkspaceOwner: boolean;
+};
 
 export type McpAuthenticatedClient = McpClient & {
   status: McpClientStatus;
@@ -40,6 +46,8 @@ export type CreateMcpClientInput = {
   workspaceId: string;
   name: string;
   createdById?: string | null;
+  ownerUserId?: string | null;
+  scope?: McpClientScope;
   actorUserId?: string | null;
   expiresAt?: Date | string | null;
   globalScopes?: Json;

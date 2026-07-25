@@ -581,6 +581,8 @@ export interface McpClients {
   id: Generated<string>;
   lastUsedAt: Timestamp | null;
   name: string;
+  ownerUserId: string | null;
+  scope: Generated<string>;
   status: Generated<string>;
   tokenHash: string;
   tokenLastFour: string;

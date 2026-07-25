@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -24,12 +25,16 @@ import {
 } from '../dto/mcp-admin.dto';
 import { McpAuditService } from './mcp-audit.service';
 import { McpTokenService } from './mcp-token.service';
-import type { McpClientStatus } from '../types/mcp.types';
+import type {
+  McpAdminPrincipal,
+  McpClientScope,
+  McpClientStatus,
+} from '../types/mcp.types';
 import { getMcpErrorType } from '../utils/mcp-error.util';
 import { McpVectorIndexService } from './mcp-vector-index.service';
 
 type PublicMcpClient = {
-  [key: string]: string | null;
+  [key: string]: string | null | McpClientCapabilities;
   id: string;
   workspaceId: string;
   name: string;
@@ -37,10 +42,25 @@ type PublicMcpClient = {
   tokenLastFour: string;
   actorUserId: string | null;
   createdById: string | null;
+  ownerUserId: string | null;
+  scope: McpClientScope;
   expiresAt: string | null;
   lastUsedAt: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+type McpClientCapabilities = {
+  [key: string]: boolean;
+  canEdit: boolean;
+  canRotateToken: boolean;
+  canDisable: boolean;
+  canDelete: boolean;
+  canManagePermissions: boolean;
+};
+
+type ManageableMcpClient = PublicMcpClient & {
+  capabilities: McpClientCapabilities;
 };
 
 type PublicMcpSpacePermission = {
@@ -116,13 +136,14 @@ export class McpAdminService {
 
   async createClient(
     workspaceId: string,
-    adminUserId: string,
+    principal: McpAdminPrincipal,
     dto: CreateMcpClientDto,
   ) {
     const requestedSpaceIds =
       dto.permissions?.map((permission) => permission.spaceId) ?? [];
     this.assertUniqueSpaceIds(requestedSpaceIds);
-    await this.assertActiveActorUser(workspaceId, dto.actorUserId);
+    const ownership = this.resolveNewClientOwnership(principal, dto);
+    await this.assertActiveActorUser(workspaceId, ownership.actorUserId);
     await this.assertSpacesExist(workspaceId, requestedSpaceIds);
 
     const expiresAt = this.parseFutureDate(dto.expiresAt, 'expiresAt');
@@ -138,8 +159,10 @@ export class McpAdminService {
           tokenLastFour: this.tokenService.getTokenLastFour(token),
           status: 'active',
           globalScopes: {},
-          actorUserId: dto.actorUserId ?? null,
-          createdById: adminUserId,
+          actorUserId: ownership.actorUserId,
+          createdById: principal.userId,
+          ownerUserId: ownership.ownerUserId,
+          scope: ownership.scope,
           expiresAt,
         })
         .returningAll()
@@ -161,7 +184,7 @@ export class McpAdminService {
       await this.auditService.log(
         {
           workspaceId,
-          actorUserId: adminUserId,
+          actorUserId: principal.userId,
           clientId: createdClient.id,
           event: 'mcp.client.create',
           resourceType: 'mcp_client',
@@ -170,6 +193,7 @@ export class McpAdminService {
           after: this.toPublicClient(createdClient),
           metadata: {
             permissionCount: dto.permissions?.length ?? 0,
+            scope: ownership.scope,
           },
         },
         trx,
@@ -188,12 +212,16 @@ export class McpAdminService {
 
     return {
       token,
-      client: this.toPublicClient(client),
+      client: this.toManageableClient(client, principal),
       permissions: await this.listClientPermissions(workspaceId, client.id),
     };
   }
 
-  async listClients(workspaceId: string, dto: ListMcpClientsDto) {
+  async listClients(
+    workspaceId: string,
+    principal: McpAdminPrincipal,
+    dto: ListMcpClientsDto,
+  ) {
     const limit = this.resolveLimit(dto.limit);
     let query = this.db
       .selectFrom('mcpClients')
@@ -202,6 +230,12 @@ export class McpAdminService {
       .where('deletedAt', 'is', null)
       .orderBy('createdAt', 'desc')
       .limit(limit);
+
+    if (!principal.isWorkspaceOwner) {
+      query = query
+        .where('scope', '=', 'personal')
+        .where('ownerUserId', '=', principal.userId);
+    }
 
     if (dto.status) {
       query = query.where('status', '=', dto.status);
@@ -219,7 +253,7 @@ export class McpAdminService {
 
     return {
       items: clients.map((client) => ({
-        ...this.toPublicClient(client),
+        ...this.toManageableClient(client, principal),
         permissions: permissionsByClientId.get(client.id) ?? [],
       })),
       meta: {
@@ -229,21 +263,39 @@ export class McpAdminService {
     };
   }
 
-  async getClient(workspaceId: string, clientId: string) {
-    const client = await this.findClientOrThrow(workspaceId, clientId);
+  async getClient(
+    workspaceId: string,
+    principal: McpAdminPrincipal,
+    clientId: string,
+  ) {
+    const client = await this.findVisibleClientOrThrow(
+      workspaceId,
+      principal,
+      clientId,
+    );
 
     return {
-      client: this.toPublicClient(client),
+      client: this.toManageableClient(client, principal),
       permissions: await this.listClientPermissions(workspaceId, client.id),
     };
   }
 
   async updateClient(
     workspaceId: string,
-    adminUserId: string,
+    principal: McpAdminPrincipal,
     dto: UpdateMcpClientDto,
+    allowRevokeOnly = false,
   ) {
-    const client = await this.findClientOrThrow(workspaceId, dto.clientId);
+    const client = await this.findVisibleClientOrThrow(
+      workspaceId,
+      principal,
+      dto.clientId,
+    );
+    if (allowRevokeOnly) {
+      this.assertCanRevokeClient(client, principal);
+    } else {
+      this.assertCanManageClient(client, principal);
+    }
     const indexSpaceIds = (
       await this.listClientPermissions(workspaceId, client.id)
     )
@@ -256,6 +308,14 @@ export class McpAdminService {
     }
 
     if (Object.prototype.hasOwnProperty.call(dto, 'actorUserId')) {
+      if (
+        client.scope === 'personal' &&
+        dto.actorUserId !== client.ownerUserId
+      ) {
+        throw new ForbiddenException(
+          'Personal MCP clients must act as their owner',
+        );
+      }
       await this.assertActiveActorUser(workspaceId, dto.actorUserId ?? null);
       patch.actorUserId = dto.actorUserId ?? null;
     }
@@ -272,7 +332,7 @@ export class McpAdminService {
 
     if (Object.keys(patch).length === 0) {
       return {
-        client: this.toPublicClient(client),
+        client: this.toManageableClient(client, principal),
         permissions: await this.listClientPermissions(workspaceId, client.id),
       };
     }
@@ -293,7 +353,7 @@ export class McpAdminService {
       await this.auditService.log(
         {
           workspaceId,
-          actorUserId: adminUserId,
+          actorUserId: principal.userId,
           clientId: client.id,
           event: 'mcp.client.update',
           resourceType: 'mcp_client',
@@ -321,28 +381,38 @@ export class McpAdminService {
     }
 
     return {
-      client: this.toPublicClient(updatedClient),
+      client: this.toManageableClient(updatedClient, principal),
       permissions: await this.listClientPermissions(workspaceId, client.id),
     };
   }
 
   async disableClient(
     workspaceId: string,
-    adminUserId: string,
+    principal: McpAdminPrincipal,
     clientId: string,
   ) {
-    return this.updateClient(workspaceId, adminUserId, {
-      clientId,
-      status: 'disabled',
-    });
+    return this.updateClient(
+      workspaceId,
+      principal,
+      {
+        clientId,
+        status: 'disabled',
+      },
+      true,
+    );
   }
 
   async deleteClient(
     workspaceId: string,
-    adminUserId: string,
+    principal: McpAdminPrincipal,
     clientId: string,
   ): Promise<void> {
-    const client = await this.findClientOrThrow(workspaceId, clientId);
+    const client = await this.findVisibleClientOrThrow(
+      workspaceId,
+      principal,
+      clientId,
+    );
+    this.assertCanRevokeClient(client, principal);
     const indexSpaceIds = (
       await this.listClientPermissions(workspaceId, client.id)
     )
@@ -368,7 +438,7 @@ export class McpAdminService {
       await this.auditService.log(
         {
           workspaceId,
-          actorUserId: adminUserId,
+          actorUserId: principal.userId,
           clientId: client.id,
           event: 'mcp.client.delete',
           resourceType: 'mcp_client',
@@ -385,10 +455,15 @@ export class McpAdminService {
 
   async rotateClientToken(
     workspaceId: string,
-    adminUserId: string,
+    principal: McpAdminPrincipal,
     clientId: string,
   ) {
-    const client = await this.findClientOrThrow(workspaceId, clientId);
+    const client = await this.findVisibleClientOrThrow(
+      workspaceId,
+      principal,
+      clientId,
+    );
+    this.assertCanManageClient(client, principal);
     const token = this.tokenService.generateToken();
     const updatedClient = await this.db.transaction().execute(async (trx) => {
       const updated = await trx
@@ -407,7 +482,7 @@ export class McpAdminService {
       await this.auditService.log(
         {
           workspaceId,
-          actorUserId: adminUserId,
+          actorUserId: principal.userId,
           clientId: client.id,
           event: 'mcp.client.rotate_token',
           resourceType: 'mcp_client',
@@ -424,12 +499,16 @@ export class McpAdminService {
 
     return {
       token,
-      client: this.toPublicClient(updatedClient),
+      client: this.toManageableClient(updatedClient, principal),
       permissions: await this.listClientPermissions(workspaceId, client.id),
     };
   }
 
-  async listAuditLogs(workspaceId: string, dto: ListMcpAuditLogsDto) {
+  async listAuditLogs(
+    workspaceId: string,
+    principal: McpAdminPrincipal,
+    dto: ListMcpAuditLogsDto,
+  ) {
     const limit = this.resolveLimit(dto.limit);
     const from = this.parseOptionalDate(dto.from, 'from');
     const to = this.parseOptionalDate(dto.to, 'to');
@@ -438,12 +517,30 @@ export class McpAdminService {
       throw new BadRequestException('from must be earlier than to');
     }
 
+    const visibleClientIds = principal.isWorkspaceOwner
+      ? null
+      : await this.listOwnedClientIds(workspaceId, principal.userId);
+    if (visibleClientIds?.length === 0) {
+      return { items: [], meta: { limit, count: 0 } };
+    }
+    if (
+      dto.clientId &&
+      visibleClientIds &&
+      !visibleClientIds.includes(dto.clientId)
+    ) {
+      return { items: [], meta: { limit, count: 0 } };
+    }
+
     let query = this.db
       .selectFrom('mcpAuditLogs')
       .selectAll()
       .where('workspaceId', '=', workspaceId)
       .orderBy('createdAt', 'desc')
       .limit(limit);
+
+    if (visibleClientIds) {
+      query = query.where('clientId', 'in', visibleClientIds);
+    }
 
     if (dto.clientId) {
       query = query.where('clientId', '=', dto.clientId);
@@ -503,10 +600,15 @@ export class McpAdminService {
 
   async upsertSpacePermission(
     workspaceId: string,
-    adminUserId: string,
+    principal: McpAdminPrincipal,
     dto: UpsertMcpClientSpacePermissionDto,
   ) {
-    await this.findClientOrThrow(workspaceId, dto.clientId);
+    const client = await this.findVisibleClientOrThrow(
+      workspaceId,
+      principal,
+      dto.clientId,
+    );
+    this.assertCanManageClient(client, principal);
     await this.assertSpacesExist(workspaceId, [dto.spaceId]);
 
     const { existing, permission } = await this.db
@@ -542,7 +644,7 @@ export class McpAdminService {
         await this.auditService.log(
           {
             workspaceId,
-            actorUserId: adminUserId,
+            actorUserId: principal.userId,
             clientId: dto.clientId,
             event: 'mcp.permission.upsert',
             resourceType: 'mcp_client_space_permission',
@@ -571,10 +673,15 @@ export class McpAdminService {
 
   async deleteSpacePermission(
     workspaceId: string,
-    adminUserId: string,
+    principal: McpAdminPrincipal,
     dto: DeleteMcpClientSpacePermissionDto,
   ): Promise<void> {
-    await this.findClientOrThrow(workspaceId, dto.clientId);
+    const client = await this.findVisibleClientOrThrow(
+      workspaceId,
+      principal,
+      dto.clientId,
+    );
+    this.assertCanManageClient(client, principal);
     const permission = await this.db.transaction().execute(async (trx) => {
       const current = await trx
         .selectFrom('mcpClientSpacePermissions')
@@ -598,7 +705,7 @@ export class McpAdminService {
       await this.auditService.log(
         {
           workspaceId,
-          actorUserId: adminUserId,
+          actorUserId: principal.userId,
           clientId: dto.clientId,
           event: 'mcp.permission.delete',
           resourceType: 'mcp_client_space_permission',
@@ -641,8 +748,44 @@ export class McpAdminService {
     }
   }
 
-  private async findClientOrThrow(
+  private resolveNewClientOwnership(
+    principal: McpAdminPrincipal,
+    dto: CreateMcpClientDto,
+  ): {
+    scope: McpClientScope;
+    ownerUserId: string | null;
+    actorUserId: string | null;
+  } {
+    const scope = dto.scope ?? 'personal';
+    if (scope === 'workspace') {
+      if (!principal.isWorkspaceOwner) {
+        throw new ForbiddenException(
+          'Only the workspace owner can create workspace MCP clients',
+        );
+      }
+      return {
+        scope,
+        ownerUserId: null,
+        actorUserId: dto.actorUserId ?? null,
+      };
+    }
+
+    if (dto.actorUserId && dto.actorUserId !== principal.userId) {
+      throw new ForbiddenException(
+        'Personal MCP clients must act as their owner',
+      );
+    }
+
+    return {
+      scope,
+      ownerUserId: principal.userId,
+      actorUserId: principal.userId,
+    };
+  }
+
+  private async findVisibleClientOrThrow(
     workspaceId: string,
+    principal: McpAdminPrincipal,
     clientId: string,
   ): Promise<McpClient> {
     const client = await this.db
@@ -657,7 +800,75 @@ export class McpAdminService {
       throw new NotFoundException('MCP client not found');
     }
 
+    if (!this.canViewClient(client, principal)) {
+      throw new NotFoundException('MCP client not found');
+    }
+
     return client;
+  }
+
+  private canViewClient(
+    client: McpClient,
+    principal: McpAdminPrincipal,
+  ): boolean {
+    return (
+      principal.isWorkspaceOwner ||
+      (client.scope === 'personal' && client.ownerUserId === principal.userId)
+    );
+  }
+
+  private canManageClient(
+    client: McpClient,
+    principal: McpAdminPrincipal,
+  ): boolean {
+    if (client.scope === 'workspace') {
+      return principal.isWorkspaceOwner;
+    }
+    return client.ownerUserId === principal.userId;
+  }
+
+  private canRevokeClient(
+    client: McpClient,
+    principal: McpAdminPrincipal,
+  ): boolean {
+    return (
+      principal.isWorkspaceOwner || this.canManageClient(client, principal)
+    );
+  }
+
+  private assertCanManageClient(
+    client: McpClient,
+    principal: McpAdminPrincipal,
+  ): void {
+    if (!this.canManageClient(client, principal)) {
+      throw new ForbiddenException(
+        'Only the client owner can change this personal MCP client',
+      );
+    }
+  }
+
+  private assertCanRevokeClient(
+    client: McpClient,
+    principal: McpAdminPrincipal,
+  ): void {
+    if (!this.canRevokeClient(client, principal)) {
+      throw new ForbiddenException('MCP client access denied');
+    }
+  }
+
+  private async listOwnedClientIds(
+    workspaceId: string,
+    ownerUserId: string,
+  ): Promise<string[]> {
+    const clients = await this.db
+      .selectFrom('mcpClients')
+      .select(['id'])
+      .where('workspaceId', '=', workspaceId)
+      .where('scope', '=', 'personal')
+      .where('ownerUserId', '=', ownerUserId)
+      .execute();
+
+    return clients.map((client) => client.id);
   }
 
   private async assertActiveActorUser(
@@ -837,10 +1048,30 @@ export class McpAdminService {
       tokenLastFour: client.tokenLastFour,
       actorUserId: client.actorUserId,
       createdById: client.createdById,
+      ownerUserId: client.ownerUserId,
+      scope: client.scope as McpClientScope,
       expiresAt: this.toNullableIsoDate(client.expiresAt),
       lastUsedAt: this.toNullableIsoDate(client.lastUsedAt),
       createdAt: this.toIsoDate(client.createdAt),
       updatedAt: this.toIsoDate(client.updatedAt),
+    };
+  }
+
+  private toManageableClient(
+    client: McpClient,
+    principal: McpAdminPrincipal,
+  ): ManageableMcpClient {
+    const canManage = this.canManageClient(client, principal);
+    const canRevoke = this.canRevokeClient(client, principal);
+    return {
+      ...this.toPublicClient(client),
+      capabilities: {
+        canEdit: canManage,
+        canRotateToken: canManage,
+        canDisable: canRevoke,
+        canDelete: canRevoke,
+        canManagePermissions: canManage,
+      },
     };
   }
 

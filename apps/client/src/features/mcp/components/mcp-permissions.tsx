@@ -41,6 +41,8 @@ export function McpPermissions() {
   const client = clientsQuery.data?.items.find(
     (item) => item.id === selectedClientId,
   );
+  const canManagePermissions =
+    client?.capabilities.canManagePermissions ?? false;
   const permissionBySpace = useMemo(
     () =>
       new Map(
@@ -82,7 +84,7 @@ export function McpPermissions() {
     field: keyof McpPermissionValues,
     checked: boolean,
   ) => {
-    if (!selectedClientId) return;
+    if (!selectedClientId || !canManagePermissions) return;
     const current = permissionBySpace.get(spaceId);
     const values = getPermissionValues(current);
     values[field] = checked;
@@ -90,7 +92,7 @@ export function McpPermissions() {
   };
 
   const setPermissions = (changes: Partial<McpPermissionValues>) => {
-    if (!selectedClientId) return;
+    if (!selectedClientId || !canManagePermissions) return;
     const updates = buildPermissionUpdates(
       selectedClientId,
       spaces.map((space) => ({
@@ -116,6 +118,7 @@ export function McpPermissions() {
     permission: IMcpSpacePermission,
     spaceName: string,
   ) => {
+    if (!canManagePermissions) return;
     modals.openConfirmModal({
       title: "Remove space permission",
       children: (
@@ -162,6 +165,13 @@ export function McpPermissions() {
         </Text>
       </div>
 
+      {client && !canManagePermissions && (
+        <Alert icon={<IconInfoCircle size={18} />} color="blue" mb="sm">
+          This personal client belongs to another administrator. You can review
+          its permissions, but only its owner can change them.
+        </Alert>
+      )}
+
       <Table.ScrollContainer minWidth={1080} type="native">
         <Table verticalSpacing="sm" highlightOnHover layout="fixed">
           <Table.Thead>
@@ -174,7 +184,10 @@ export function McpPermissions() {
                       checked={allSelection.checked}
                       indeterminate={allSelection.indeterminate}
                       disabled={
-                        !selectedClientId || !spaces.length || isMutating
+                        !selectedClientId ||
+                        !spaces.length ||
+                        !canManagePermissions ||
+                        isMutating
                       }
                       onChange={(event) =>
                         toggleAllPermissions(event.currentTarget.checked)
@@ -198,7 +211,10 @@ export function McpPermissions() {
                           checked={selection?.checked ?? false}
                           indeterminate={selection?.indeterminate ?? false}
                           disabled={
-                            !selectedClientId || !spaces.length || isMutating
+                            !selectedClientId ||
+                            !spaces.length ||
+                            !canManagePermissions ||
+                            isMutating
                           }
                           onChange={(event) =>
                             setPermissions({
@@ -242,7 +258,11 @@ export function McpPermissions() {
                           <Checkbox
                             aria-label={`${column.label} permission for ${space.name}`}
                             checked={permission?.[column.field] ?? false}
-                            disabled={!selectedClientId || isMutating}
+                            disabled={
+                              !selectedClientId ||
+                              !canManagePermissions ||
+                              isMutating
+                            }
                             onChange={(event) =>
                               togglePermission(
                                 space.id,
@@ -257,11 +277,18 @@ export function McpPermissions() {
                     <Table.Td>
                       <div className={classes.permissionCell}>
                         {permission && (
-                          <Tooltip label="Remove all permissions">
+                          <Tooltip
+                            label={
+                              canManagePermissions
+                                ? "Remove all permissions"
+                                : "Only the client owner can change permissions"
+                            }
+                          >
                             <ActionIcon
                               variant="subtle"
                               color="red"
                               aria-label={`Remove all permissions for ${space.name}`}
+                              disabled={!canManagePermissions}
                               onClick={() =>
                                 confirmRemove(permission, space.name)
                               }

@@ -6,6 +6,14 @@ import type { McpVectorIndexService } from './mcp-vector-index.service';
 
 describe('McpAdminService vector eligibility reconciliation', () => {
   const workspaceId = 'workspace-1';
+  const principal = {
+    userId: 'admin-1',
+    isWorkspaceOwner: false,
+  };
+  const ownerPrincipal = {
+    userId: 'owner-1',
+    isWorkspaceOwner: true,
+  };
   const client = {
     id: 'client-1',
     workspaceId,
@@ -14,8 +22,10 @@ describe('McpAdminService vector eligibility reconciliation', () => {
     tokenHash: 'hash',
     tokenLastFour: 'last',
     globalScopes: {},
-    actorUserId: 'actor-1',
+    actorUserId: 'admin-1',
     createdById: 'admin-1',
+    ownerUserId: 'admin-1',
+    scope: 'personal',
     expiresAt: null,
     lastUsedAt: null,
     createdAt: new Date(),
@@ -131,7 +141,7 @@ describe('McpAdminService vector eligibility reconciliation', () => {
   });
 
   it('reconciles the space after index permission is revoked', async () => {
-    await service.upsertSpacePermission(workspaceId, 'admin-1', {
+    await service.upsertSpacePermission(workspaceId, principal, {
       clientId: client.id,
       spaceId: existingPermission.spaceId,
       canIndex: false,
@@ -155,7 +165,7 @@ describe('McpAdminService vector eligibility reconciliation', () => {
     permissionQuery.executeTakeFirst.mockResolvedValueOnce(undefined);
 
     await expect(
-      service.upsertSpacePermission(workspaceId, 'admin-1', {
+      service.upsertSpacePermission(workspaceId, principal, {
         clientId: client.id,
         spaceId: existingPermission.spaceId,
         canRead: true,
@@ -198,13 +208,13 @@ describe('McpAdminService vector eligibility reconciliation', () => {
       updatedPermission,
     );
 
-    await service.upsertSpacePermission(workspaceId, 'admin-1', {
+    await service.upsertSpacePermission(workspaceId, principal, {
       clientId: client.id,
       spaceId: existingPermission.spaceId,
       canRead: true,
     });
     await expect(
-      service.upsertSpacePermission(workspaceId, 'admin-1', {
+      service.upsertSpacePermission(workspaceId, principal, {
         clientId: client.id,
         spaceId: existingPermission.spaceId,
         canRead: false,
@@ -217,7 +227,7 @@ describe('McpAdminService vector eligibility reconciliation', () => {
   });
 
   it('soft deletes a permission transactionally before reconciling vectors', async () => {
-    await service.deleteSpacePermission(workspaceId, 'admin-1', {
+    await service.deleteSpacePermission(workspaceId, principal, {
       clientId: client.id,
       spaceId: existingPermission.spaceId,
     });
@@ -246,7 +256,7 @@ describe('McpAdminService vector eligibility reconciliation', () => {
     auditService.log.mockRejectedValueOnce(new Error('audit insert failed'));
 
     await expect(
-      service.upsertSpacePermission(workspaceId, 'admin-1', {
+      service.upsertSpacePermission(workspaceId, principal, {
         clientId: client.id,
         spaceId: existingPermission.spaceId,
         canIndex: false,
@@ -268,7 +278,7 @@ describe('McpAdminService vector eligibility reconciliation', () => {
 
     const result = await service.rotateClientToken(
       workspaceId,
-      'admin-1',
+      principal,
       client.id,
     );
 
@@ -316,7 +326,7 @@ describe('McpAdminService vector eligibility reconciliation', () => {
     auditService.log.mockRejectedValueOnce(new Error('audit insert failed'));
 
     await expect(
-      service.rotateClientToken(workspaceId, 'admin-1', client.id),
+      service.rotateClientToken(workspaceId, principal, client.id),
     ).rejects.toThrow('audit insert failed');
 
     expect(auditService.log).toHaveBeenCalledWith(
@@ -328,5 +338,71 @@ describe('McpAdminService vector eligibility reconciliation', () => {
       trx,
     );
     expect(client.tokenHash).toBe('hash');
+  });
+
+  it('allows the workspace owner to disable but not take over a personal client', async () => {
+    const disabledClient = {
+      ...client,
+      status: 'disabled',
+      updatedAt: new Date(),
+    };
+    updateQuery.executeTakeFirstOrThrow.mockResolvedValueOnce(disabledClient);
+
+    const result = await service.disableClient(
+      workspaceId,
+      ownerPrincipal,
+      client.id,
+    );
+
+    expect(result.client).toEqual(
+      expect.objectContaining({
+        id: client.id,
+        status: 'disabled',
+        capabilities: expect.objectContaining({
+          canEdit: false,
+          canRotateToken: false,
+          canDisable: true,
+          canDelete: true,
+        }),
+      }),
+    );
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: ownerPrincipal.userId,
+        event: 'mcp.client.update',
+      }),
+      trx,
+    );
+  });
+
+  it('allows the workspace owner to rotate a workspace client', async () => {
+    const workspaceClient = {
+      ...client,
+      scope: 'workspace',
+      ownerUserId: null,
+    };
+    const rotatedClient = {
+      ...workspaceClient,
+      tokenHash: 'new-hash',
+      tokenLastFour: 'oken',
+      updatedAt: new Date(),
+    };
+    clientQuery.executeTakeFirst.mockResolvedValueOnce(workspaceClient);
+    updateQuery.executeTakeFirstOrThrow.mockResolvedValueOnce(rotatedClient);
+
+    const result = await service.rotateClientToken(
+      workspaceId,
+      ownerPrincipal,
+      workspaceClient.id,
+    );
+
+    expect(result.client.capabilities).toEqual({
+      canEdit: true,
+      canRotateToken: true,
+      canDisable: true,
+      canDelete: true,
+      canManagePermissions: true,
+    });
+    expect(result.token).toBe('dm_mcp_new-token');
   });
 });

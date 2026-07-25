@@ -1,4 +1,5 @@
 export type McpClientStatus = "active" | "disabled" | "expired";
+export type McpClientScope = "personal" | "workspace";
 
 export type McpPermissionField =
   | "canSearch"
@@ -42,6 +43,15 @@ export interface IMcpClient {
   tokenLastFour: string;
   actorUserId: string | null;
   createdById: string | null;
+  ownerUserId: string | null;
+  scope: McpClientScope;
+  capabilities: {
+    canEdit: boolean;
+    canRotateToken: boolean;
+    canDisable: boolean;
+    canDelete: boolean;
+    canManagePermissions: boolean;
+  };
   expiresAt: string | null;
   lastUsedAt: string | null;
   createdAt: string;
@@ -62,6 +72,7 @@ export interface IMcpClientTokenResponse {
 
 export interface IMcpClientInput {
   name: string;
+  scope?: McpClientScope;
   actorUserId?: string | null;
   expiresAt?: string | null;
   permissions?: Partial<IMcpSpacePermission>[];

@@ -1,6 +1,8 @@
 import { Button, Group, Modal, Select, Stack, TextInput } from "@mantine/core";
 import { useForm } from "@mantine/form";
+import { useAtomValue } from "jotai";
 import { useEffect } from "react";
+import { currentUserAtom } from "@/features/user/atoms/current-user-atom";
 import { useWorkspaceMembersQuery } from "@/features/workspace/queries/workspace-query";
 import {
   useCreateMcpClientMutation,
@@ -9,8 +11,10 @@ import {
 import {
   IMcpClient,
   IMcpClientTokenResponse,
+  McpClientScope,
   McpClientStatus,
 } from "@/features/mcp/types/mcp.types";
+import useUserRole from "@/hooks/use-user-role";
 
 type McpClientFormModalProps = {
   opened: boolean;
@@ -21,6 +25,7 @@ type McpClientFormModalProps = {
 
 type FormValues = {
   name: string;
+  scope: McpClientScope;
   actorUserId: string | null;
   expiresAt: string;
   status: McpClientStatus;
@@ -32,12 +37,15 @@ export function McpClientFormModal({
   onClose,
   onToken,
 }: McpClientFormModalProps) {
+  const currentUser = useAtomValue(currentUserAtom);
+  const { isOwner } = useUserRole();
   const membersQuery = useWorkspaceMembersQuery({ limit: 100 });
   const createMutation = useCreateMcpClientMutation();
   const updateMutation = useUpdateMcpClientMutation();
   const form = useForm<FormValues>({
     initialValues: {
       name: "",
+      scope: "personal",
       actorUserId: null,
       expiresAt: "",
       status: "active",
@@ -51,14 +59,19 @@ export function McpClientFormModal({
     if (!opened) return;
     form.setValues({
       name: client?.name ?? "",
-      actorUserId: client?.actorUserId ?? null,
+      scope: client?.scope ?? "personal",
+      actorUserId: client
+        ? client.scope === "personal"
+          ? (client.actorUserId ?? client.ownerUserId)
+          : client.actorUserId
+        : (currentUser?.user.id ?? null),
       expiresAt: client?.expiresAt
         ? toLocalDateTimeInput(client.expiresAt)
         : "",
       status: client?.status === "disabled" ? "disabled" : "active",
     });
     form.resetDirty();
-  }, [opened, client?.id]);
+  }, [opened, client?.id, currentUser?.user.id]);
 
   const actorOptions =
     membersQuery.data?.items.map((member) => ({
@@ -85,7 +98,9 @@ export function McpClientFormModal({
 
     const response = await createMutation.mutateAsync({
       name: values.name.trim(),
-      actorUserId: values.actorUserId,
+      scope: values.scope,
+      actorUserId:
+        values.scope === "personal" ? currentUser?.user.id : values.actorUserId,
       expiresAt: expiresAt ?? undefined,
       permissions: [],
     });
@@ -111,13 +126,42 @@ export function McpClientFormModal({
             {...form.getInputProps("name")}
           />
           <Select
+            label="Ownership"
+            description={
+              form.values.scope === "personal"
+                ? "Only you can manage or rotate this client."
+                : "Only the workspace owner can manage this shared client."
+            }
+            data={[
+              { value: "personal", label: "Personal client" },
+              { value: "workspace", label: "Workspace client" },
+            ]}
+            allowDeselect={false}
+            disabled={Boolean(client) || !isOwner}
+            value={form.values.scope}
+            onChange={(value) => {
+              const scope = (value ?? "personal") as McpClientScope;
+              form.setFieldValue("scope", scope);
+              form.setFieldValue(
+                "actorUserId",
+                scope === "personal" ? (currentUser?.user.id ?? null) : null,
+              );
+            }}
+          />
+          <Select
             label="Actor user"
-            description="Native Docmost page permissions are evaluated as this user."
+            description={
+              form.values.scope === "personal"
+                ? "Personal clients always use your Docmost permissions."
+                : "Native Docmost page permissions are evaluated as this user."
+            }
             placeholder="Select a workspace member"
             data={actorOptions}
             searchable
             clearable
-            disabled={membersQuery.isLoading}
+            disabled={
+              membersQuery.isLoading || form.values.scope === "personal"
+            }
             {...form.getInputProps("actorUserId")}
           />
           <TextInput

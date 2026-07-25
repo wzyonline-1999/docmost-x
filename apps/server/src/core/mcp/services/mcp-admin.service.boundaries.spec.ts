@@ -1,4 +1,8 @@
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import type { KyselyDB } from '@docmost/db/types/kysely.types';
 import { ListMcpAuditLogsDto, ListMcpClientsDto } from '../dto/mcp-admin.dto';
 import type { McpAuditService } from './mcp-audit.service';
@@ -8,6 +12,14 @@ import type { McpVectorIndexService } from './mcp-vector-index.service';
 
 describe('McpAdminService admin boundaries', () => {
   const workspaceId = 'workspace-1';
+  const principal = {
+    userId: 'admin-1',
+    isWorkspaceOwner: false,
+  };
+  const ownerPrincipal = {
+    userId: 'owner-1',
+    isWorkspaceOwner: true,
+  };
   const client = {
     id: 'client-1',
     workspaceId,
@@ -16,8 +28,10 @@ describe('McpAdminService admin boundaries', () => {
     tokenHash: 'secret-token-hash',
     tokenLastFour: 'last',
     globalScopes: {},
-    actorUserId: 'actor-1',
+    actorUserId: 'admin-1',
     createdById: 'admin-1',
+    ownerUserId: 'admin-1',
+    scope: 'personal',
     expiresAt: null,
     lastUsedAt: null,
     createdAt: new Date('2026-07-01T00:00:00.000Z'),
@@ -60,6 +74,7 @@ describe('McpAdminService admin boundaries', () => {
     createdAt: new Date('2026-07-03T00:00:00.000Z'),
   };
   const clientQuery = {
+    select: jest.fn().mockReturnThis(),
     selectAll: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
@@ -120,7 +135,7 @@ describe('McpAdminService admin boundaries', () => {
     clientQuery.executeTakeFirst.mockResolvedValue(client);
     permissionQuery.execute.mockResolvedValue([permission]);
     userQuery.executeTakeFirst.mockResolvedValue({
-      id: 'actor-1',
+      id: 'admin-1',
       workspaceId,
       deactivatedAt: null,
       deletedAt: null,
@@ -137,7 +152,7 @@ describe('McpAdminService admin boundaries', () => {
 
   it('rejects duplicate create permissions before any database mutation', async () => {
     await expect(
-      service.createClient(workspaceId, 'admin-1', {
+      service.createClient(workspaceId, principal, {
         name: 'Codex',
         permissions: [
           { spaceId: permission.spaceId, canRead: true },
@@ -148,6 +163,65 @@ describe('McpAdminService admin boundaries', () => {
 
     expect(db.selectFrom).not.toHaveBeenCalled();
     expect(db.transaction).not.toHaveBeenCalled();
+    expect(tokenService.generateToken).not.toHaveBeenCalled();
+  });
+
+  it('prevents regular admins from creating workspace-owned clients', async () => {
+    await expect(
+      service.createClient(workspaceId, principal, {
+        name: 'Shared client',
+        scope: 'workspace',
+      }),
+    ).rejects.toThrow(ForbiddenException);
+
+    expect(db.selectFrom).not.toHaveBeenCalled();
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('prevents personal clients from impersonating another user', async () => {
+    await expect(
+      service.createClient(workspaceId, principal, {
+        name: 'Impersonating client',
+        actorUserId: 'actor-1',
+      }),
+    ).rejects.toThrow('Personal MCP clients must act as their owner');
+
+    expect(db.selectFrom).not.toHaveBeenCalled();
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('hides another administrator personal client from regular admins', async () => {
+    clientQuery.executeTakeFirst.mockResolvedValueOnce({
+      ...client,
+      createdById: 'admin-2',
+      ownerUserId: 'admin-2',
+      actorUserId: 'admin-2',
+    });
+
+    await expect(
+      service.getClient(workspaceId, principal, client.id),
+    ).rejects.toThrow(NotFoundException);
+    expect(permissionQuery.execute).not.toHaveBeenCalled();
+  });
+
+  it('lets the workspace owner inspect but not take over personal clients', async () => {
+    const result = await service.getClient(
+      workspaceId,
+      ownerPrincipal,
+      client.id,
+    );
+
+    expect(result.client.capabilities).toEqual({
+      canEdit: false,
+      canRotateToken: false,
+      canDisable: true,
+      canDelete: true,
+      canManagePermissions: false,
+    });
+
+    await expect(
+      service.rotateClientToken(workspaceId, ownerPrincipal, client.id),
+    ).rejects.toThrow(ForbiddenException);
     expect(tokenService.generateToken).not.toHaveBeenCalled();
   });
 
@@ -181,8 +255,9 @@ describe('McpAdminService admin boundaries', () => {
     userQuery.executeTakeFirst.mockResolvedValueOnce(actor);
 
     await expect(
-      service.createClient(workspaceId, 'admin-1', {
+      service.createClient(workspaceId, ownerPrincipal, {
         name: 'Codex',
+        scope: 'workspace',
         actorUserId: 'actor-1',
       }),
     ).rejects.toThrow('Invalid MCP actor user');
@@ -197,8 +272,14 @@ describe('McpAdminService admin boundaries', () => {
       deletedAt: null,
     });
 
+    clientQuery.executeTakeFirst.mockResolvedValueOnce({
+      ...client,
+      scope: 'workspace',
+      ownerUserId: null,
+    });
+
     await expect(
-      service.updateClient(workspaceId, 'admin-1', {
+      service.updateClient(workspaceId, ownerPrincipal, {
         clientId: client.id,
         actorUserId: 'actor-2',
       }),
@@ -212,7 +293,7 @@ describe('McpAdminService admin boundaries', () => {
     ['2020-01-01T00:00:00.000Z', 'in the future'],
   ])('rejects an invalid expiration %s', async (expiresAt, message) => {
     await expect(
-      service.createClient(workspaceId, 'admin-1', {
+      service.createClient(workspaceId, principal, {
         name: 'Codex',
         expiresAt,
       }),
@@ -226,7 +307,7 @@ describe('McpAdminService admin boundaries', () => {
       status: 'active',
       query: 'code',
     });
-    const result = await service.listClients(workspaceId, dto);
+    const result = await service.listClients(workspaceId, principal, dto);
 
     expect(clientQuery.where).toHaveBeenCalledWith(
       'workspaceId',
@@ -234,6 +315,12 @@ describe('McpAdminService admin boundaries', () => {
       workspaceId,
     );
     expect(clientQuery.where).toHaveBeenCalledWith('deletedAt', 'is', null);
+    expect(clientQuery.where).toHaveBeenCalledWith('scope', '=', 'personal');
+    expect(clientQuery.where).toHaveBeenCalledWith(
+      'ownerUserId',
+      '=',
+      principal.userId,
+    );
     expect(clientQuery.where).toHaveBeenCalledWith('status', '=', 'active');
     expect(clientQuery.where).toHaveBeenCalledWith('name', 'ilike', '%code%');
     expect(clientQuery.limit).toHaveBeenCalledWith(100);
@@ -260,13 +347,16 @@ describe('McpAdminService admin boundaries', () => {
       query: 'request',
       limit: 50,
     });
-    const result = await service.listAuditLogs(workspaceId, dto);
+    const result = await service.listAuditLogs(workspaceId, principal, dto);
 
     expect(auditQuery.where).toHaveBeenCalledWith(
       'workspaceId',
       '=',
       workspaceId,
     );
+    expect(auditQuery.where).toHaveBeenCalledWith('clientId', 'in', [
+      client.id,
+    ]);
     expect(auditQuery.where).toHaveBeenCalledWith('clientId', '=', client.id);
     expect(auditQuery.where).toHaveBeenCalledWith(
       'spaceId',
@@ -313,6 +403,7 @@ describe('McpAdminService admin boundaries', () => {
     await expect(
       service.listAuditLogs(
         workspaceId,
+        principal,
         Object.assign(new ListMcpAuditLogsDto(), {
           from: '2026-07-05T00:00:00.000Z',
           to: '2026-07-04T00:00:00.000Z',

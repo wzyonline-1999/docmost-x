@@ -23,6 +23,10 @@ describe('McpAdminController', () => {
   };
   const workspace = { id: 'workspace-1' };
   const adminUser = { id: 'user-1', role: 'admin' };
+  const adminPrincipal = {
+    userId: 'user-1',
+    isWorkspaceOwner: false,
+  };
 
   let controller: McpAdminController;
 
@@ -62,7 +66,7 @@ describe('McpAdminController', () => {
     });
     expect(adminService.createClient).toHaveBeenCalledWith(
       'workspace-1',
-      'user-1',
+      adminPrincipal,
       { name: 'Codex MCP' },
     );
   });
@@ -80,7 +84,7 @@ describe('McpAdminController', () => {
     });
     expect(adminService.rotateClientToken).toHaveBeenCalledWith(
       'workspace-1',
-      'user-1',
+      adminPrincipal,
       'client-1',
     );
   });
@@ -97,7 +101,26 @@ describe('McpAdminController', () => {
     );
 
     expect(response).toEqual({ items: [], meta: {} });
-    expect(adminService.listAuditLogs).toHaveBeenCalledWith('workspace-1', dto);
+    expect(adminService.listAuditLogs).toHaveBeenCalledWith(
+      'workspace-1',
+      adminPrincipal,
+      dto,
+    );
+  });
+
+  it('marks workspace owners in the MCP management principal', async () => {
+    const owner = { id: 'owner-1', role: 'owner' };
+    await controller.listClients(
+      new ListMcpClientsDto(),
+      owner as unknown as User,
+      workspace as unknown as Workspace,
+    );
+
+    expect(adminService.listClients).toHaveBeenCalledWith(
+      'workspace-1',
+      { userId: 'owner-1', isWorkspaceOwner: true },
+      expect.any(ListMcpClientsDto),
+    );
   });
 
   it.each([

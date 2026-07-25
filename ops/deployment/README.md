@@ -111,7 +111,7 @@ The fast rollback does not touch data:
 3. Restore the previous immutable image tag and verify `/api/health`.
 
 Only roll back database migrations after a fresh schema backup and after the
-old application image is stopped. The five MCP migrations are reversible in
+old application image is stopped. The six MCP migrations are reversible in
 reverse timestamp order. Rolling back the base MCP migration drops MCP clients,
 permissions, audit rows, idempotency rows, jobs, and vector chunks; those vector
 rows must be rebuilt after reapplying migrations. Normal Docmost tables are not

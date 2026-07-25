@@ -13,7 +13,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { PaginationOptions } from '@docmost/db/pagination/pagination-options';
-import type { McpClientStatus } from '../types/mcp.types';
+import type { McpClientScope, McpClientStatus } from '../types/mcp.types';
 
 export class McpClientIdDto {
   @IsUUID()
@@ -69,6 +69,11 @@ export class CreateMcpClientDto {
   @IsNotEmpty()
   @MaxLength(120)
   name!: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['personal', 'workspace'])
+  scope?: McpClientScope;
 
   @IsOptional()
   @IsUUID()

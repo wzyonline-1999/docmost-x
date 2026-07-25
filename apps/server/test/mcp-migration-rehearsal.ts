@@ -5,7 +5,7 @@ import { FileMigrationProvider, Kysely, Migrator, sql } from 'kysely';
 import { PostgresJSDialect } from 'kysely-postgres-js';
 import postgres from 'postgres';
 
-const MCP_MIGRATION_COUNT = 5;
+const MCP_MIGRATION_COUNT = 6;
 const SAFE_DATABASE_NAME = /^docmost_mcp_migration_test_[a-z0-9_-]+$/i;
 const SAFE_SCHEMA_NAME = /^[a-z][a-z0-9_]*$/;
 const MCP_TABLES = [
@@ -20,6 +20,7 @@ const REQUIRED_INDEXES = [
   'idx_mcp_clients_token_hash_alive',
   'idx_mcp_clients_workspace_status',
   'idx_mcp_clients_expires_at',
+  'idx_mcp_clients_workspace_owner',
   'idx_mcp_client_space_permissions_alive',
   'idx_mcp_client_space_permissions_workspace_space',
   'idx_mcp_audit_logs_workspace_created',
@@ -39,6 +40,7 @@ const REQUIRED_INDEXES = [
 ];
 const REQUIRED_CONSTRAINTS = [
   'mcp_clients_status_check',
+  'mcp_clients_scope_check',
   'mcp_idempotency_keys_status_check',
   'docmost_mcp_index_jobs_type_check',
   'docmost_mcp_index_jobs_status_check',
@@ -152,7 +154,7 @@ async function main(): Promise<void> {
         {
           database: databaseName,
           schema: schemaName,
-          sequence: 'latest -> down x5 -> latest',
+          sequence: `latest -> down x${MCP_MIGRATION_COUNT} -> latest`,
           rolledBackMigrations,
           mcpTableCount: MCP_TABLES.length,
           requiredIndexCount: REQUIRED_INDEXES.length,
