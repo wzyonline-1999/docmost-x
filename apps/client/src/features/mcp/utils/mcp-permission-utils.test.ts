@@ -108,7 +108,7 @@ describe("MCP permission utilities", () => {
     ]);
   });
 
-  it("preserves stale configured values while updating eligible fields", () => {
+  it("clears stale configured values while updating eligible fields", () => {
     const ceiling = getPermissionValues({ canRead: true });
     const updates = buildPermissionUpdates(
       "client-1",
@@ -124,7 +124,27 @@ describe("MCP permission utilities", () => {
 
     expect(updates[0]).toMatchObject({
       canRead: true,
-      canUpdate: true,
+      canUpdate: false,
+    });
+  });
+
+  it("does not enable a stale permission above the native ceiling", () => {
+    const ceiling = getPermissionValues({ canRead: true });
+    const updates = buildPermissionUpdates(
+      "client-1",
+      [
+        {
+          id: "space-1",
+          permission: { canRead: false, canUpdate: false },
+          ceiling,
+        },
+      ],
+      { canRead: true, canUpdate: true },
+    );
+
+    expect(updates[0]).toMatchObject({
+      canRead: true,
+      canUpdate: false,
     });
   });
 });

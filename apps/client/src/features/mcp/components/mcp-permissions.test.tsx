@@ -1,12 +1,21 @@
 import { MantineProvider } from "@mantine/core";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpPermissions } from "./mcp-permissions";
 import classes from "./mcp-settings.module.css";
 
 const mocks = vi.hoisted(() => ({
   bulkMutate: vi.fn(),
+  clientParams: vi.fn(),
+  clientsQuery: vi.fn(),
   deleteMutate: vi.fn(),
+  matrixQuery: vi.fn(),
+  membersQuery: vi.fn(),
+  openConfirmModal: vi.fn((options: { onConfirm?: () => void }) =>
+    options.onConfirm?.(),
+  ),
+  spacesQuery: vi.fn(),
+  spaceParams: vi.fn(),
   upsertMutate: vi.fn(),
 }));
 
@@ -26,35 +35,59 @@ const allPermissions = Object.fromEntries(
   Object.keys(emptyPermissions).map((field) => [field, true]),
 );
 
-vi.mock("@/features/space/queries/space-query", () => ({
-  useGetSpacesQuery: () => ({
+function makeClientsQuery(status = "active") {
+  return {
+    isError: false,
+    isFetching: false,
     isLoading: false,
+    refetch: vi.fn(),
+    data: {
+      items: [
+        {
+          actorUserId: "actor-1",
+          id: "client-1",
+          name: "Codex",
+          scope: "workspace",
+          status,
+          capabilities: { canManagePermissions: true },
+          permissions: [],
+        },
+      ],
+      meta: {
+        hasNextPage: false,
+        hasPrevPage: false,
+        nextCursor: null,
+        prevCursor: null,
+      },
+    },
+  };
+}
+
+function makeSpacesQuery() {
+  return {
+    isError: false,
+    isLoading: false,
+    refetch: vi.fn(),
     data: {
       items: [
         { id: "space-1", name: "Space One", slug: "space-one" },
         { id: "space-2", name: "Space Two", slug: "space-two" },
       ],
+      meta: {
+        hasNextPage: false,
+        hasPrevPage: false,
+        nextCursor: null,
+        prevCursor: null,
+      },
     },
-  }),
-}));
+  };
+}
 
-vi.mock("@/features/mcp/queries/mcp-query", () => ({
-  useMcpClientsQuery: () => ({
-    isLoading: false,
-    data: {
-      items: [
-        {
-          id: "client-1",
-          name: "Codex",
-          capabilities: { canManagePermissions: true },
-          permissions: [],
-        },
-      ],
-    },
-  }),
-  useMcpPermissionMatrixQuery: () => ({
+function makeMatrixQuery() {
+  return {
     isLoading: false,
     isError: false,
+    refetch: vi.fn(),
     data: {
       clientId: "client-1",
       actorUserId: "actor-1",
@@ -106,7 +139,36 @@ vi.mock("@/features/mcp/queries/mcp-query", () => ({
         },
       ],
     },
-  }),
+  };
+}
+
+vi.mock("@/features/space/queries/space-query", () => ({
+  useGetSpacesQuery: (params: unknown) => {
+    mocks.spaceParams(params);
+    return mocks.spacesQuery();
+  },
+}));
+
+vi.mock("@/features/workspace/queries/workspace-query", () => ({
+  useWorkspaceMembersQuery: () => mocks.membersQuery(),
+}));
+
+vi.mock("@mantine/modals", () => ({
+  modals: {
+    openConfirmModal: mocks.openConfirmModal,
+  },
+}));
+
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+}));
+
+vi.mock("@/features/mcp/queries/mcp-query", () => ({
+  useMcpClientsQuery: (params: unknown) => {
+    mocks.clientParams(params);
+    return mocks.clientsQuery();
+  },
+  useMcpPermissionMatrixQuery: () => mocks.matrixQuery(),
   useUpsertMcpPermissionMutation: () => ({
     isPending: false,
     mutate: mocks.upsertMutate,
@@ -129,6 +191,19 @@ function renderPermissions() {
   );
 }
 
+function setMediaMatches(matches: boolean) {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches,
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
 describe("McpPermissions", () => {
   beforeAll(() => {
     vi.stubGlobal(
@@ -141,21 +216,19 @@ describe("McpPermissions", () => {
     );
     Object.defineProperty(window, "matchMedia", {
       writable: true,
-      value: vi.fn().mockImplementation((query: string) => ({
-        matches: false,
-        media: query,
-        onchange: null,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        addListener: vi.fn(),
-        removeListener: vi.fn(),
-        dispatchEvent: vi.fn(),
-      })),
+      value: vi.fn(),
     });
   });
 
   beforeEach(() => {
     vi.clearAllMocks();
+    setMediaMatches(false);
+    mocks.clientsQuery.mockReturnValue(makeClientsQuery());
+    mocks.matrixQuery.mockReturnValue(makeMatrixQuery());
+    mocks.membersQuery.mockReturnValue({
+      data: { items: [{ id: "actor-1", name: "Test Actor" }] },
+    });
+    mocks.spacesQuery.mockReturnValue(makeSpacesQuery());
   });
 
   it("selects all eligible permissions without enabling permissions above the ceiling", () => {
@@ -197,15 +270,21 @@ describe("McpPermissions", () => {
 
     fireEvent.click(selectSearch);
 
-    expect(mocks.bulkMutate).toHaveBeenCalledWith([
+    expect(mocks.bulkMutate).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          clientId: "client-1",
+          spaceId: "space-2",
+          canSearch: true,
+          canRead: false,
+          canUpdate: true,
+        }),
+      ],
       expect.objectContaining({
-        clientId: "client-1",
-        spaceId: "space-2",
-        canSearch: true,
-        canRead: false,
-        canUpdate: true,
+        onError: expect.any(Function),
+        onSuccess: expect.any(Function),
       }),
-    ]);
+    );
   });
 
   it("shows stale configured permissions and allows only clearing them", () => {
@@ -220,6 +299,11 @@ describe("McpPermissions", () => {
     });
     expect((inactiveUpdate as HTMLInputElement).checked).toBe(true);
     expect((inactiveUpdate as HTMLInputElement).disabled).toBe(false);
+    const describedBy = inactiveUpdate.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)?.textContent).toContain(
+      "read-only role",
+    );
 
     const unavailableCreate = screen.getByRole("checkbox", {
       name: "Create permission for Space Two",
@@ -233,7 +317,126 @@ describe("McpPermissions", () => {
         spaceId: "space-2",
         canUpdate: false,
       }),
+      expect.objectContaining({
+        onError: expect.any(Function),
+        onSuccess: expect.any(Function),
+      }),
     );
+  });
+
+  it("clears stale and active grants together with the explicit page action", () => {
+    renderPermissions();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clear page permissions" }),
+    );
+
+    expect(mocks.openConfirmModal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Confirm bulk removal",
+      }),
+    );
+    const [updates] = mocks.bulkMutate.mock.calls[0];
+    expect(updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          spaceId: "space-1",
+          canSearch: false,
+          canRead: false,
+        }),
+        expect.objectContaining({
+          spaceId: "space-2",
+          canUpdate: false,
+        }),
+      ]),
+    );
+  });
+
+  it("shows disabled client context before the permission matrix", () => {
+    mocks.clientsQuery.mockReturnValue(makeClientsQuery("disabled"));
+
+    renderPermissions();
+
+    expect(screen.getByText("Client disabled")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "This client is disabled. Its permissions are visible but requests are rejected.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("renders an explicit retry action when spaces fail to load", () => {
+    const refetch = vi.fn();
+    mocks.spacesQuery.mockReturnValue({
+      ...makeSpacesQuery(),
+      data: undefined,
+      isError: true,
+      refetch,
+    });
+
+    renderPermissions();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(refetch).toHaveBeenCalledOnce();
+  });
+
+  it("uses a compact per-space editor at narrow widths", () => {
+    setMediaMatches(true);
+
+    const { container } = renderPermissions();
+
+    expect(screen.getByText("Space One")).toBeTruthy();
+    expect(container.querySelector(`.${classes.permissionTable}`)).toBeNull();
+    const spaceControl = screen.getByRole("button", {
+      name: /Space One space-one Actor: Admin/,
+    });
+    fireEvent.click(spaceControl);
+    expect(spaceControl.getAttribute("aria-expanded")).toBe("true");
+    expect(
+      container.querySelector(`.${classes.compactPermissions}`),
+    ).toBeTruthy();
+  });
+
+  it("passes the next client cursor to the server query", () => {
+    const query = makeClientsQuery();
+    query.data.meta.hasNextPage = true;
+    query.data.meta.nextCursor = "next-client";
+    mocks.clientsQuery.mockReturnValue(query);
+
+    renderPermissions();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(mocks.clientParams).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: "next-client", limit: 20 }),
+    );
+  });
+
+  it("passes the next space cursor to the server query", () => {
+    const query = makeSpacesQuery();
+    query.data.meta.hasNextPage = true;
+    query.data.meta.nextCursor = "next-space";
+    mocks.spacesQuery.mockReturnValue(query);
+
+    renderPermissions();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(mocks.spaceParams).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: "next-space", limit: 20 }),
+    );
+  });
+
+  it("shows saved feedback after a permission update succeeds", () => {
+    renderPermissions();
+
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Create permission for Space One",
+      }),
+    );
+    const callbacks = mocks.upsertMutate.mock.calls[0][1];
+    act(() => callbacks.onSuccess());
+
+    expect(screen.getByText("All changes saved")).toBeTruthy();
   });
 
   it("centers every row control in a full-width wrapper", () => {

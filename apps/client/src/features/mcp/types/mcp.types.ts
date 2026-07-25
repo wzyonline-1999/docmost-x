@@ -1,3 +1,5 @@
+import type { IPaginationMeta } from "@/lib/types";
+
 export type McpClientStatus = "active" | "disabled" | "expired";
 export type McpClientScope = "personal" | "workspace";
 export type McpActorSpaceRole = "admin" | "writer" | "reader" | null;
@@ -88,7 +90,12 @@ export interface IMcpClient {
 
 export interface IMcpClientList {
   items: IMcpClient[];
-  meta: { limit: number; count: number };
+  meta: IPaginationMeta;
+}
+
+export interface IMcpPermissionBatchResult {
+  items: IMcpSpacePermission[];
+  meta: { count: number };
 }
 
 export interface IMcpClientTokenResponse {

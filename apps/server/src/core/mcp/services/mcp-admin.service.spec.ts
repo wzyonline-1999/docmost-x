@@ -302,6 +302,87 @@ describe('McpAdminService vector eligibility reconciliation', () => {
     expect(auditService.log).not.toHaveBeenCalled();
   });
 
+  it('updates and inserts a permission batch in one transaction', async () => {
+    const secondSpaceId = 'space-2';
+    const insertedPermission = {
+      ...existingPermission,
+      id: 'permission-2',
+      spaceId: secondSpaceId,
+      canRead: true,
+      canIndex: false,
+    };
+    spaceQuery.execute.mockResolvedValueOnce([
+      { id: existingPermission.spaceId },
+      { id: secondSpaceId },
+    ]);
+    permissionQuery.execute.mockResolvedValueOnce([existingPermission]);
+    insertQuery.executeTakeFirstOrThrow.mockResolvedValueOnce(
+      insertedPermission,
+    );
+
+    const result = await service.bulkUpsertSpacePermissions(
+      workspaceId,
+      principal,
+      {
+        clientId: client.id,
+        permissions: [
+          { spaceId: existingPermission.spaceId, canRead: false },
+          { spaceId: secondSpaceId, canRead: true },
+        ],
+      },
+    );
+
+    expect(transactionExecute).toHaveBeenCalledTimes(1);
+    expect(updateQuery.executeTakeFirstOrThrow).toHaveBeenCalledTimes(1);
+    expect(insertQuery.executeTakeFirstOrThrow).toHaveBeenCalledTimes(1);
+    expect(auditService.log).toHaveBeenCalledTimes(2);
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: 'mcp_admin.bulk_upsert_space_permissions',
+        metadata: expect.objectContaining({ batchSize: 2 }),
+      }),
+      trx,
+    );
+    expect(result).toMatchObject({
+      items: [
+        expect.objectContaining({ spaceId: existingPermission.spaceId }),
+        expect.objectContaining({ spaceId: secondSpaceId }),
+      ],
+      meta: { count: 2 },
+    });
+  });
+
+  it('validates every permission before mutating a batch', async () => {
+    const secondSpaceId = 'space-2';
+    spaceQuery.execute.mockResolvedValueOnce([
+      { id: existingPermission.spaceId },
+      { id: secondSpaceId },
+    ]);
+    permissionQuery.execute.mockResolvedValueOnce([existingPermission]);
+    effectivePermissionService.assertPermissionPatchAllowed
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new ForbiddenException(
+          'MCP actor native permissions do not allow: canUpdate',
+        );
+      });
+
+    await expect(
+      service.bulkUpsertSpacePermissions(workspaceId, principal, {
+        clientId: client.id,
+        permissions: [
+          { spaceId: existingPermission.spaceId, canRead: false },
+          { spaceId: secondSpaceId, canUpdate: true },
+        ],
+      }),
+    ).rejects.toThrow('MCP actor native permissions do not allow');
+
+    expect(updateQuery.executeTakeFirstOrThrow).not.toHaveBeenCalled();
+    expect(insertQuery.executeTakeFirstOrThrow).not.toHaveBeenCalled();
+    expect(auditService.log).not.toHaveBeenCalled();
+    expect(vectorIndexService.reconcileSpaceEligibility).not.toHaveBeenCalled();
+  });
+
   it('returns configured, ceiling, and effective permission values', async () => {
     effectivePermissionService.getClientSpaceCeilings.mockResolvedValueOnce({
       actorAvailable: true,

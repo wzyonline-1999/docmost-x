@@ -6,6 +6,7 @@ import {
   IMcpClientList,
   IMcpClientTokenResponse,
   IMcpPermissionMatrix,
+  IMcpPermissionBatchResult,
   IMcpSpacePermission,
   McpClientStatus,
   McpSpacePermissionInput,
@@ -15,6 +16,8 @@ export async function getMcpClients(params?: {
   query?: string;
   status?: McpClientStatus;
   limit?: number;
+  cursor?: string;
+  beforeCursor?: string;
 }): Promise<IMcpClientList> {
   const response = await api.post<IMcpClientList>("/mcp/admin/clients", params);
   return response.data;
@@ -60,6 +63,31 @@ export async function upsertMcpPermission(
   const response = await api.post<IMcpSpacePermission>(
     "/mcp/admin/clients/permissions/upsert",
     permission,
+  );
+  return response.data;
+}
+
+export async function bulkUpsertMcpPermissions(
+  permissions: McpSpacePermissionInput[],
+): Promise<IMcpPermissionBatchResult> {
+  const first = permissions[0];
+  if (!first) {
+    throw new Error("Permission batch cannot be empty");
+  }
+  if (
+    permissions.some((permission) => permission.clientId !== first.clientId)
+  ) {
+    throw new Error("Permission batch must target one MCP client");
+  }
+
+  const response = await api.post<IMcpPermissionBatchResult>(
+    "/mcp/admin/clients/permissions/bulk-upsert",
+    {
+      clientId: first.clientId,
+      permissions: permissions.map(
+        ({ clientId: _clientId, ...permission }) => permission,
+      ),
+    },
   );
   return response.data;
 }

@@ -60,7 +60,8 @@ export function buildPermissionUpdates(
       Object.entries(changes).filter(
         ([field, checked]) =>
           checked !== undefined &&
-          ceiling?.[field as McpPermissionField] !== false,
+          (checked === false ||
+            ceiling?.[field as McpPermissionField] !== false),
       ),
     ) as Partial<McpPermissionValues>;
     const hasChanges = Object.entries(eligibleChanges).some(

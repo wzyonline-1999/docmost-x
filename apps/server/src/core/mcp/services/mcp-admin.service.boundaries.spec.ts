@@ -364,7 +364,7 @@ describe('McpAdminService admin boundaries', () => {
     );
     expect(clientQuery.where).toHaveBeenCalledWith('status', '=', 'active');
     expect(clientQuery.where).toHaveBeenCalledWith('name', 'ilike', '%code%');
-    expect(clientQuery.limit).toHaveBeenCalledWith(100);
+    expect(clientQuery.limit).toHaveBeenCalledWith(101);
     expect(result.items[0]).toEqual(
       expect.objectContaining({
         id: client.id,
@@ -372,6 +372,13 @@ describe('McpAdminService admin boundaries', () => {
         permissions: [expect.objectContaining({ id: permission.id })],
       }),
     );
+    expect(result.meta).toEqual({
+      limit: 100,
+      hasNextPage: false,
+      hasPrevPage: false,
+      nextCursor: null,
+      prevCursor: null,
+    });
     expect(JSON.stringify(result)).not.toContain(client.tokenHash);
   });
 

@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   ArrayMaxSize,
   IsArray,
   IsBoolean,
@@ -130,6 +131,15 @@ export class UpdateMcpClientDto extends McpClientIdDto {
 export class UpsertMcpClientSpacePermissionDto extends McpSpacePermissionDto {
   @IsUUID()
   clientId!: string;
+}
+
+export class BulkUpsertMcpClientSpacePermissionsDto extends McpClientIdDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => McpSpacePermissionDto)
+  permissions!: McpSpacePermissionDto[];
 }
 
 export class DeleteMcpClientSpacePermissionDto extends McpClientIdDto {

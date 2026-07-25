@@ -1,6 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { notifications } from "@mantine/notifications";
 import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { notifications } from "@mantine/notifications";
+import { useTranslation } from "react-i18next";
+import {
+  bulkUpsertMcpPermissions,
   createMcpClient,
   deleteMcpClient,
   deleteMcpPermission,
@@ -29,10 +36,13 @@ export function useMcpClientsQuery(params?: {
   query?: string;
   status?: McpClientStatus;
   limit?: number;
+  cursor?: string;
+  beforeCursor?: string;
 }) {
   return useQuery({
     queryKey: ["mcp-clients", params],
     queryFn: () => getMcpClients(params),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -52,18 +62,20 @@ export function useMcpPermissionMatrixQuery(
 }
 
 export function useCreateMcpClientMutation() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: IMcpClientInput) => createMcpClient(input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
-      notifications.show({ message: "MCP client created" });
+      notifications.show({ message: t("MCP client created") });
     },
     onError: showMutationError,
   });
 }
 
 export function useUpdateMcpClientMutation() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (
@@ -77,43 +89,46 @@ export function useUpdateMcpClientMutation() {
       queryClient.invalidateQueries({
         queryKey: ["mcp-permission-matrix"],
       });
-      notifications.show({ message: "MCP client updated" });
+      notifications.show({ message: t("MCP client updated") });
     },
     onError: showMutationError,
   });
 }
 
 export function useDisableMcpClientMutation() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: disableMcpClient,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
-      notifications.show({ message: "MCP client disabled" });
+      notifications.show({ message: t("MCP client disabled") });
     },
     onError: showMutationError,
   });
 }
 
 export function useDeleteMcpClientMutation() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: deleteMcpClient,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
-      notifications.show({ message: "MCP client deleted" });
+      notifications.show({ message: t("MCP client deleted") });
     },
     onError: showMutationError,
   });
 }
 
 export function useRotateMcpClientTokenMutation() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: rotateMcpClientToken,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
-      notifications.show({ message: "MCP token rotated" });
+      notifications.show({ message: t("MCP token rotated") });
     },
     onError: showMutationError,
   });
@@ -141,20 +156,8 @@ export function useUpsertMcpPermissionMutation() {
 export function useBulkUpsertMcpPermissionsMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (permissions: McpSpacePermissionInput[]) => {
-      const results = await Promise.allSettled(
-        permissions.map(upsertMcpPermission),
-      );
-      const failure = results.find(
-        (result): result is PromiseRejectedResult =>
-          result.status === "rejected",
-      );
-
-      if (failure) throw failure.reason;
-      return results.map((result) =>
-        result.status === "fulfilled" ? result.value : undefined,
-      );
-    },
+    mutationFn: (permissions: McpSpacePermissionInput[]) =>
+      bulkUpsertMcpPermissions(permissions),
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
       queryClient.invalidateQueries({
@@ -166,6 +169,7 @@ export function useBulkUpsertMcpPermissionsMutation() {
 }
 
 export function useDeleteMcpPermissionMutation() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: deleteMcpPermission,
@@ -174,7 +178,7 @@ export function useDeleteMcpPermissionMutation() {
       queryClient.invalidateQueries({
         queryKey: ["mcp-permission-matrix"],
       });
-      notifications.show({ message: "Space permission removed" });
+      notifications.show({ message: t("Space permission removed") });
     },
     onError: showMutationError,
   });

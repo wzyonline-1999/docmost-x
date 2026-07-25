@@ -18,6 +18,7 @@ import {
 } from '../casl/interfaces/workspace-ability.type';
 import { UserRole } from '../../common/helpers/types/permission';
 import {
+  BulkUpsertMcpClientSpacePermissionsDto,
   CreateMcpClientDto,
   DeleteMcpClientSpacePermissionDto,
   GetMcpPermissionMatrixDto,
@@ -168,6 +169,21 @@ export class McpAdminController {
   ) {
     this.assertCanManageMcp(user, workspace);
     return this.mcpAdminService.getPermissionMatrix(
+      workspace.id,
+      this.toPrincipal(user),
+      dto,
+    );
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('clients/permissions/bulk-upsert')
+  bulkUpsertSpacePermissions(
+    @Body() dto: BulkUpsertMcpClientSpacePermissionsDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertCanManageMcp(user, workspace);
+    return this.mcpAdminService.bulkUpsertSpacePermissions(
       workspace.id,
       this.toPrincipal(user),
       dto,

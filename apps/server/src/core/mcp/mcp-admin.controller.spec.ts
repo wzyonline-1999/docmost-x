@@ -16,6 +16,7 @@ describe('McpAdminController', () => {
     rotateClientToken: jest.fn(),
     listAuditLogs: jest.fn(),
     getPermissionMatrix: jest.fn(),
+    bulkUpsertSpacePermissions: jest.fn(),
     upsertSpacePermission: jest.fn(),
     deleteSpacePermission: jest.fn(),
   };
@@ -136,6 +137,33 @@ describe('McpAdminController', () => {
     );
   });
 
+  it('forwards an atomic permission batch for workspace API admins', async () => {
+    const dto = {
+      clientId: 'client-1',
+      permissions: [
+        { spaceId: 'space-1', canRead: true },
+        { spaceId: 'space-2', canSearch: true },
+      ],
+    };
+    adminService.bulkUpsertSpacePermissions.mockResolvedValueOnce({
+      items: [],
+      meta: { count: 2 },
+    });
+
+    await expect(
+      controller.bulkUpsertSpacePermissions(
+        dto,
+        adminUser as unknown as User,
+        workspace as unknown as Workspace,
+      ),
+    ).resolves.toEqual({ items: [], meta: { count: 2 } });
+    expect(adminService.bulkUpsertSpacePermissions).toHaveBeenCalledWith(
+      'workspace-1',
+      adminPrincipal,
+      dto,
+    );
+  });
+
   it('marks workspace owners in the MCP management principal', async () => {
     const owner = { id: 'owner-1', role: 'owner' };
     await controller.listClients(
@@ -241,6 +269,19 @@ describe('McpAdminController', () => {
           workspace as unknown as Workspace,
         ),
       adminService.getPermissionMatrix,
+    ],
+    [
+      'bulk upsert permissions',
+      () =>
+        controller.bulkUpsertSpacePermissions(
+          {
+            clientId: 'client-1',
+            permissions: [{ spaceId: 'space-1', canRead: true }],
+          },
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.bulkUpsertSpacePermissions,
     ],
     [
       'upsert permission',

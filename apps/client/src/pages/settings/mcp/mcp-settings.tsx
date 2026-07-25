@@ -2,6 +2,7 @@ import { Tabs } from "@mantine/core";
 import { IconHistory, IconKey, IconShieldLock } from "@tabler/icons-react";
 import { useState } from "react";
 import { Helmet } from "react-helmet-async";
+import { useTranslation } from "react-i18next";
 import SettingsTitle from "@/components/settings/settings-title";
 import { McpAuditLog } from "@/features/mcp/components/mcp-audit-log";
 import { McpClientFormModal } from "@/features/mcp/components/mcp-client-form-modal";
@@ -15,6 +16,7 @@ import {
 import { getAppName } from "@/lib/config";
 
 export default function McpSettings() {
+  const { t } = useTranslation();
   const [formOpened, setFormOpened] = useState(false);
   const [editingClient, setEditingClient] = useState<IMcpClient | null>(null);
   const [tokenResponse, setTokenResponse] =
@@ -42,16 +44,16 @@ export default function McpSettings() {
       <Tabs defaultValue="clients" keepMounted={false}>
         <Tabs.List style={{ flexWrap: "nowrap", overflowX: "auto" }}>
           <Tabs.Tab value="clients" leftSection={<IconKey size={17} />}>
-            Clients
+            {t("Clients")}
           </Tabs.Tab>
           <Tabs.Tab
             value="permissions"
             leftSection={<IconShieldLock size={17} />}
           >
-            Permissions
+            {t("Permissions")}
           </Tabs.Tab>
           <Tabs.Tab value="audit" leftSection={<IconHistory size={17} />}>
-            Audit
+            {t("Audit")}
           </Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="clients" pt="sm">

@@ -15,6 +15,7 @@ import {
 } from '@docmost/db/types/entity.types';
 import { isUserDisabled } from '../../../common/helpers/utils';
 import {
+  BulkUpsertMcpClientSpacePermissionsDto,
   CreateMcpClientDto,
   DeleteMcpClientSpacePermissionDto,
   GetMcpPermissionMatrixDto,
@@ -36,6 +37,7 @@ import { MCP_PERMISSION_FIELDS } from '../types/mcp.types';
 import { getMcpErrorType } from '../utils/mcp-error.util';
 import { McpVectorIndexService } from './mcp-vector-index.service';
 import { McpEffectivePermissionService } from './mcp-effective-permission.service';
+import { executeWithCursorPagination } from '@docmost/db/pagination/cursor-pagination';
 
 type PublicMcpClient = {
   [key: string]: string | null | McpClientCapabilities;
@@ -228,9 +230,7 @@ export class McpAdminService {
       .selectFrom('mcpClients')
       .selectAll()
       .where('workspaceId', '=', workspaceId)
-      .where('deletedAt', 'is', null)
-      .orderBy('createdAt', 'desc')
-      .limit(limit);
+      .where('deletedAt', 'is', null);
 
     if (!principal.isWorkspaceOwner) {
       query = query
@@ -246,7 +246,20 @@ export class McpAdminService {
       query = query.where('name', 'ilike', `%${dto.query}%`);
     }
 
-    const clients = await query.execute();
+    const result = await executeWithCursorPagination(query, {
+      perPage: limit,
+      cursor: dto.cursor,
+      beforeCursor: dto.beforeCursor,
+      fields: [
+        { expression: 'createdAt', direction: 'desc' },
+        { expression: 'id', direction: 'desc' },
+      ],
+      parseCursor: (cursor) => ({
+        createdAt: new Date(cursor.createdAt),
+        id: cursor.id,
+      }),
+    });
+    const clients = result.items;
     const permissionsByClientId = await this.getPermissionsByClientId(
       workspaceId,
       clients.map((client) => client.id),
@@ -257,10 +270,7 @@ export class McpAdminService {
         ...this.toManageableClient(client, principal),
         permissions: permissionsByClientId.get(client.id) ?? [],
       })),
-      meta: {
-        limit,
-        count: clients.length,
-      },
+      meta: result.meta,
     };
   }
 
@@ -699,6 +709,162 @@ export class McpAdminService {
     }
 
     return this.toPublicPermission(permission);
+  }
+
+  async bulkUpsertSpacePermissions(
+    workspaceId: string,
+    principal: McpAdminPrincipal,
+    dto: BulkUpsertMcpClientSpacePermissionsDto,
+  ) {
+    if (dto.permissions.length === 0) {
+      throw new BadRequestException('MCP permission batch cannot be empty');
+    }
+
+    const client = await this.findVisibleClientOrThrow(
+      workspaceId,
+      principal,
+      dto.clientId,
+    );
+    this.assertCanManageClient(client, principal);
+
+    const spaceIds = dto.permissions.map((permission) => permission.spaceId);
+    this.assertUniqueSpaceIds(spaceIds);
+    await this.assertSpacesExist(workspaceId, spaceIds);
+
+    const permissionCeilings =
+      await this.effectivePermissionService.getClientSpaceCeilings(
+        client,
+        spaceIds,
+      );
+    const ceilingBySpaceId = new Map(
+      permissionCeilings.spaces.map((ceiling) => [ceiling.spaceId, ceiling]),
+    );
+
+    const results = await this.db.transaction().execute(async (trx) => {
+      const currentPermissions = await trx
+        .selectFrom('mcpClientSpacePermissions')
+        .selectAll()
+        .where('clientId', '=', dto.clientId)
+        .where('workspaceId', '=', workspaceId)
+        .where('spaceId', 'in', spaceIds)
+        .where('deletedAt', 'is', null)
+        .execute();
+      const currentBySpaceId = new Map(
+        currentPermissions.map((permission) => [
+          permission.spaceId,
+          permission,
+        ]),
+      );
+      const updatedPermissions: Array<{
+        existing: McpClientSpacePermission | undefined;
+        permission: McpClientSpacePermission;
+        ceiling: McpPermissionValues;
+      }> = [];
+
+      for (const requestedPermission of dto.permissions) {
+        const current = currentBySpaceId.get(requestedPermission.spaceId);
+        const ceiling =
+          ceilingBySpaceId.get(requestedPermission.spaceId)?.permissions ??
+          this.effectivePermissionService.emptyPermissions();
+
+        this.effectivePermissionService.assertPermissionPatchAllowed(
+          ceiling,
+          requestedPermission,
+          current,
+        );
+      }
+
+      for (const requestedPermission of dto.permissions) {
+        const current = currentBySpaceId.get(requestedPermission.spaceId);
+        const ceiling =
+          ceilingBySpaceId.get(requestedPermission.spaceId)?.permissions ??
+          this.effectivePermissionService.emptyPermissions();
+
+        const updatedPermission = current
+          ? await trx
+              .updateTable('mcpClientSpacePermissions')
+              .set({
+                ...this.toPermissionPatch(requestedPermission),
+                updatedAt: new Date(),
+              })
+              .where('id', '=', current.id)
+              .returningAll()
+              .executeTakeFirstOrThrow()
+          : await trx
+              .insertInto('mcpClientSpacePermissions')
+              .values(
+                this.toPermissionInsertValues(
+                  dto.clientId,
+                  workspaceId,
+                  requestedPermission,
+                ),
+              )
+              .returningAll()
+              .executeTakeFirstOrThrow();
+
+        await this.auditService.log(
+          {
+            workspaceId,
+            actorUserId: principal.userId,
+            clientId: dto.clientId,
+            event: 'mcp.permission.upsert',
+            resourceType: 'mcp_client_space_permission',
+            resourceId: updatedPermission.id,
+            spaceId: requestedPermission.spaceId,
+            toolName: 'mcp_admin.bulk_upsert_space_permissions',
+            before: current ? this.toPublicPermission(current) : null,
+            after: this.toPublicPermission(updatedPermission),
+            metadata: {
+              batchSize: dto.permissions.length,
+              actorRole:
+                ceilingBySpaceId.get(requestedPermission.spaceId)?.actorRole ??
+                null,
+              nativeAccessReason:
+                ceilingBySpaceId.get(requestedPermission.spaceId)?.reason ??
+                permissionCeilings.actorReason,
+              effectivePermissions:
+                this.effectivePermissionService.intersectPermissions(
+                  updatedPermission,
+                  ceiling,
+                ),
+            },
+          },
+          trx,
+        );
+
+        updatedPermissions.push({
+          existing: current,
+          permission: updatedPermission,
+          ceiling,
+        });
+      }
+
+      return updatedPermissions;
+    });
+
+    for (const result of results) {
+      if (!result.existing?.canIndex && !result.permission.canIndex) {
+        continue;
+      }
+
+      const effectiveCanIndex =
+        this.effectivePermissionService.intersectPermissions(
+          result.permission,
+          result.ceiling,
+        ).canIndex;
+      await this.reconcileVectorSpaces(
+        workspaceId,
+        [result.permission.spaceId],
+        effectiveCanIndex,
+      );
+    }
+
+    return {
+      items: results.map((result) =>
+        this.toPublicPermission(result.permission),
+      ),
+      meta: { count: results.length },
+    };
   }
 
   async getPermissionMatrix(
