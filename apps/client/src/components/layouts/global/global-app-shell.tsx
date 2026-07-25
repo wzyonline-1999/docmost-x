@@ -62,7 +62,7 @@ export default function GlobalAppShell({
         setSidebarWidth(newWidth);
       }
     },
-    [isResizing],
+    [isResizing, setSidebarWidth],
   );
 
   useEffect(() => {
@@ -89,7 +89,7 @@ export default function GlobalAppShell({
       header={{ height: 45 }}
       navbar={{
         width: isSpaceRoute ? sidebarWidth : 300,
-        breakpoint: "sm",
+        breakpoint: isSettingsRoute ? "md" : "sm",
         collapsed: {
           mobile: !mobileOpened,
           desktop: !desktopOpened,
