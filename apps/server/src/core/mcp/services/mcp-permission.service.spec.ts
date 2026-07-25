@@ -4,6 +4,7 @@ import type {
   McpAuthenticatedClient,
   McpPermissionAction,
 } from '../types/mcp.types';
+import type { McpEffectivePermissionService } from './mcp-effective-permission.service';
 import { McpPermissionService } from './mcp-permission.service';
 
 describe('McpPermissionService', () => {
@@ -11,6 +12,7 @@ describe('McpPermissionService', () => {
     id: 'client-1',
     workspaceId: 'workspace-1',
     status: 'active',
+    actorUserId: 'actor-1',
   } as McpAuthenticatedClient;
   const permission = {
     id: 'permission-1',
@@ -44,13 +46,73 @@ describe('McpPermissionService', () => {
   const db = {
     selectFrom: jest.fn(() => query),
   };
+  const effectivePermissionService = {
+    isClientActionAllowed: jest.fn(),
+    filterClientSpaceIds: jest.fn(),
+    getClientSpaceCeilings: jest.fn(),
+    intersectPermissions: jest.fn(),
+    emptyPermissions: jest.fn(),
+  };
   let service: McpPermissionService;
 
   beforeEach(() => {
     jest.clearAllMocks();
     query.execute.mockResolvedValue([{ spaceId: permission.spaceId }]);
     query.executeTakeFirst.mockResolvedValue(permission);
-    service = new McpPermissionService(db as unknown as KyselyDB);
+    effectivePermissionService.isClientActionAllowed.mockResolvedValue(true);
+    effectivePermissionService.filterClientSpaceIds.mockImplementation(
+      async (
+        _client: McpAuthenticatedClient,
+        _action: McpPermissionAction,
+        spaceIds: string[],
+      ) => spaceIds,
+    );
+    effectivePermissionService.getClientSpaceCeilings.mockImplementation(
+      async (_client: McpAuthenticatedClient, spaceIds: string[]) => ({
+        actorAvailable: true,
+        actorReason: null,
+        spaces: spaceIds.map((spaceId) => ({
+          spaceId,
+          actorRole: 'admin',
+          reason: null,
+          permissions: {
+            canSearch: true,
+            canSemanticSearch: true,
+            canRead: true,
+            canCreate: true,
+            canUpdate: true,
+            canAppend: true,
+            canDelete: true,
+            canRestore: true,
+            canIndex: true,
+          },
+        })),
+      }),
+    );
+    effectivePermissionService.intersectPermissions.mockImplementation(
+      (configured: Record<string, boolean>, ceiling: Record<string, boolean>) =>
+        Object.fromEntries(
+          Object.keys(ceiling).map((field) => [
+            field,
+            configured[field] === true && ceiling[field] === true,
+          ]),
+        ),
+    );
+    effectivePermissionService.emptyPermissions.mockReturnValue({
+      canSearch: false,
+      canSemanticSearch: false,
+      canRead: false,
+      canCreate: false,
+      canUpdate: false,
+      canAppend: false,
+      canDelete: false,
+      canRestore: false,
+      canIndex: false,
+    });
+    service = new McpPermissionService(
+      db as unknown as KyselyDB,
+      effectivePermissionService as unknown as McpEffectivePermissionService,
+    );
   });
 
   it('scopes permission lookup to client, workspace, space, and active rows', async () => {
@@ -103,6 +165,23 @@ describe('McpPermissionService', () => {
     ).rejects.toThrow(ForbiddenException);
   });
 
+  it('fails closed when configured permission exceeds current native access', async () => {
+    effectivePermissionService.isClientActionAllowed.mockResolvedValueOnce(
+      false,
+    );
+
+    await expect(
+      service.hasSpacePermission(client, 'read', permission.spaceId),
+    ).resolves.toBe(false);
+
+    effectivePermissionService.isClientActionAllowed.mockResolvedValueOnce(
+      false,
+    );
+    await expect(
+      service.assertSpacePermission(client, 'read', permission.spaceId),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
   it('returns the permission row when the requested action is allowed', async () => {
     await expect(
       service.assertSpacePermission(client, 'read', permission.spaceId),
@@ -110,6 +189,10 @@ describe('McpPermissionService', () => {
   });
 
   it('intersects requested spaces with active action permissions', async () => {
+    effectivePermissionService.filterClientSpaceIds.mockResolvedValueOnce([
+      'space-1',
+    ]);
+
     await expect(
       service.getAllowedSpaceIds(client, 'search', ['space-1', 'space-2']),
     ).resolves.toEqual(['space-1']);
@@ -119,6 +202,23 @@ describe('McpPermissionService', () => {
       'space-1',
       'space-2',
     ]);
+    expect(
+      effectivePermissionService.filterClientSpaceIds,
+    ).toHaveBeenCalledWith(client, 'search', ['space-1']);
+  });
+
+  it('removes configured spaces that the actor can no longer access', async () => {
+    query.execute.mockResolvedValueOnce([
+      { spaceId: 'space-1' },
+      { spaceId: 'space-2' },
+    ]);
+    effectivePermissionService.filterClientSpaceIds.mockResolvedValueOnce([
+      'space-2',
+    ]);
+
+    await expect(service.getAllowedSpaceIds(client, 'read')).resolves.toEqual([
+      'space-2',
+    ]);
   });
 
   it('does not add an empty requested-space filter', async () => {
@@ -126,6 +226,51 @@ describe('McpPermissionService', () => {
 
     expect(query.where).toHaveBeenCalledWith('canIndex', '=', true);
     expect(query.where).not.toHaveBeenCalledWith('spaceId', 'in', []);
+  });
+
+  it('returns effective permission metadata instead of stale configured values', async () => {
+    effectivePermissionService.getClientSpaceCeilings.mockResolvedValueOnce({
+      actorAvailable: true,
+      actorReason: null,
+      spaces: [
+        {
+          spaceId: permission.spaceId,
+          actorRole: 'reader',
+          reason: 'read_only',
+          permissions: {
+            canSearch: true,
+            canSemanticSearch: true,
+            canRead: true,
+            canCreate: false,
+            canUpdate: false,
+            canAppend: false,
+            canDelete: false,
+            canRestore: false,
+            canIndex: true,
+          },
+        },
+      ],
+    });
+
+    await expect(
+      service.getEffectiveSpacePermission(client, permission.spaceId),
+    ).resolves.toMatchObject({
+      canRead: true,
+      canCreate: false,
+      canUpdate: false,
+      canIndex: true,
+    });
+  });
+
+  it('returns no effective metadata when no configured permission exists', async () => {
+    query.executeTakeFirst.mockResolvedValueOnce(undefined);
+
+    await expect(
+      service.getEffectiveSpacePermission(client, 'space-missing'),
+    ).resolves.toBeUndefined();
+    expect(
+      effectivePermissionService.getClientSpaceCeilings,
+    ).not.toHaveBeenCalled();
   });
 
   it('masks missing, cross-workspace, and normally deleted pages', async () => {

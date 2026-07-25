@@ -22,6 +22,7 @@ import { McpMetricsController } from './mcp-metrics.controller';
 import { McpMetricsService } from './services/mcp-metrics.service';
 import { McpPageHistoryService } from './services/mcp-page-history.service';
 import { McpAttachmentService } from './services/mcp-attachment.service';
+import { McpEffectivePermissionService } from './services/mcp-effective-permission.service';
 
 @Module({
   imports: [AttachmentModule, PageModule, StorageModule],
@@ -31,6 +32,7 @@ import { McpAttachmentService } from './services/mcp-attachment.service';
     McpAttachmentService,
     McpActorAccessService,
     McpAuditService,
+    McpEffectivePermissionService,
     McpEmbeddingService,
     McpIdempotencyService,
     McpMetricsService,
@@ -50,6 +52,7 @@ import { McpAttachmentService } from './services/mcp-attachment.service';
     McpAttachmentService,
     McpActorAccessService,
     McpAuditService,
+    McpEffectivePermissionService,
     McpEmbeddingService,
     McpIdempotencyService,
     McpMetricsService,

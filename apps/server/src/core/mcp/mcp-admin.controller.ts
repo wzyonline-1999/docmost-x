@@ -20,6 +20,7 @@ import { UserRole } from '../../common/helpers/types/permission';
 import {
   CreateMcpClientDto,
   DeleteMcpClientSpacePermissionDto,
+  GetMcpPermissionMatrixDto,
   ListMcpAuditLogsDto,
   ListMcpClientsDto,
   McpClientIdDto,
@@ -152,6 +153,21 @@ export class McpAdminController {
   ) {
     this.assertCanManageMcp(user, workspace);
     return this.mcpAdminService.listAuditLogs(
+      workspace.id,
+      this.toPrincipal(user),
+      dto,
+    );
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('clients/permissions/matrix')
+  getPermissionMatrix(
+    @Body() dto: GetMcpPermissionMatrixDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertCanManageMcp(user, workspace);
+    return this.mcpAdminService.getPermissionMatrix(
       workspace.id,
       this.toPrincipal(user),
       dto,

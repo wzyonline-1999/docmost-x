@@ -7,6 +7,7 @@ import {
   disableMcpClient,
   getMcpAuditLogs,
   getMcpClients,
+  getMcpPermissionMatrix,
   rotateMcpClientToken,
   updateMcpClient,
   upsertMcpPermission,
@@ -35,6 +36,21 @@ export function useMcpClientsQuery(params?: {
   });
 }
 
+export function useMcpPermissionMatrixQuery(
+  clientId: string | null,
+  spaceIds: string[],
+) {
+  return useQuery({
+    queryKey: ["mcp-permission-matrix", clientId, spaceIds],
+    queryFn: () =>
+      getMcpPermissionMatrix({
+        clientId: clientId as string,
+        spaceIds,
+      }),
+    enabled: Boolean(clientId) && spaceIds.length > 0,
+  });
+}
+
 export function useCreateMcpClientMutation() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -58,6 +74,9 @@ export function useUpdateMcpClientMutation() {
     ) => updateMcpClient(input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
+      queryClient.invalidateQueries({
+        queryKey: ["mcp-permission-matrix"],
+      });
       notifications.show({ message: "MCP client updated" });
     },
     onError: showMutationError,
@@ -111,6 +130,9 @@ export function useUpsertMcpPermissionMutation() {
     ) => upsertMcpPermission(permission),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
+      queryClient.invalidateQueries({
+        queryKey: ["mcp-permission-matrix"],
+      });
     },
     onError: showMutationError,
   });
@@ -135,6 +157,9 @@ export function useBulkUpsertMcpPermissionsMutation() {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
+      queryClient.invalidateQueries({
+        queryKey: ["mcp-permission-matrix"],
+      });
     },
     onError: showMutationError,
   });
@@ -146,6 +171,9 @@ export function useDeleteMcpPermissionMutation() {
     mutationFn: deleteMcpPermission,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
+      queryClient.invalidateQueries({
+        queryKey: ["mcp-permission-matrix"],
+      });
       notifications.show({ message: "Space permission removed" });
     },
     onError: showMutationError,

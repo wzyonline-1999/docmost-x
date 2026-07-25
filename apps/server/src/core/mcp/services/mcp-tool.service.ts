@@ -800,21 +800,40 @@ export class McpToolService {
         rows.map((row) => row.id),
       ),
     );
+    const readableRows = rows.filter((row) => readableSpaceIds.has(row.id));
+    const effectivePermissions =
+      await this.permissionService.resolveEffectivePermissions(
+        context.client,
+        readableRows.map((row) => ({
+          spaceId: row.id,
+          permissions: row,
+        })),
+      );
+    const effectiveBySpaceId = new Map(
+      effectivePermissions.map((item) => [item.spaceId, item.permissions]),
+    );
 
     return {
-      items: rows
-        .filter((row) => readableSpaceIds.has(row.id))
-        .map((row) => ({
-          id: row.id,
-          name: row.name,
-          slug: row.slug,
-          description: row.description,
-          visibility: row.visibility,
-          isPersonal: row.isPersonal,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-          permissions: this.pickPermissionFields(row),
-        })),
+      items: readableRows.flatMap((row) => {
+        const permissions = effectiveBySpaceId.get(row.id);
+        if (!permissions || !Object.values(permissions).some(Boolean)) {
+          return [];
+        }
+
+        return [
+          {
+            id: row.id,
+            name: row.name,
+            slug: row.slug,
+            description: row.description,
+            visibility: row.visibility,
+            isPersonal: row.isPersonal,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+            permissions,
+          },
+        ];
+      }),
     };
   }
 
@@ -2411,12 +2430,12 @@ export class McpToolService {
     context: McpToolContext,
     spaceId: string,
   ): Promise<unknown> {
-    const permission = await this.permissionService.getSpacePermission(
+    const permission = await this.permissionService.getEffectiveSpacePermission(
       context.client,
       spaceId,
     );
 
-    return permission ? this.pickPermissionFields(permission) : {};
+    return permission ?? {};
   }
 
   private async maybeAuditRead(
@@ -2475,20 +2494,6 @@ export class McpToolService {
       createdAt: page.createdAt,
       updatedAt: page.updatedAt,
       deletedAt: page.deletedAt,
-    };
-  }
-
-  private pickPermissionFields(permission: Record<string, unknown>): unknown {
-    return {
-      canSearch: Boolean(permission.canSearch),
-      canSemanticSearch: Boolean(permission.canSemanticSearch),
-      canRead: Boolean(permission.canRead),
-      canCreate: Boolean(permission.canCreate),
-      canUpdate: Boolean(permission.canUpdate),
-      canAppend: Boolean(permission.canAppend),
-      canDelete: Boolean(permission.canDelete),
-      canRestore: Boolean(permission.canRestore),
-      canIndex: Boolean(permission.canIndex),
     };
   }
 

@@ -10,7 +10,10 @@ import {
   MCP_PERMISSION_COLUMN,
   McpAuthenticatedClient,
   McpPermissionAction,
+  McpPermissionField,
+  McpPermissionValues,
 } from '../types/mcp.types';
+import { McpEffectivePermissionService } from './mcp-effective-permission.service';
 
 export type McpPageTarget = {
   id: string;
@@ -21,7 +24,10 @@ export type McpPageTarget = {
 
 @Injectable()
 export class McpPermissionService {
-  constructor(@InjectKysely() private readonly db: KyselyDB) {}
+  constructor(
+    @InjectKysely() private readonly db: KyselyDB,
+    private readonly effectivePermissionService: McpEffectivePermissionService,
+  ) {}
 
   async getSpacePermission(
     client: McpAuthenticatedClient,
@@ -47,7 +53,14 @@ export class McpPermissionService {
       return false;
     }
 
-    return Boolean(permission[MCP_PERMISSION_COLUMN[action]]);
+    return (
+      Boolean(permission[MCP_PERMISSION_COLUMN[action]]) &&
+      (await this.effectivePermissionService.isClientActionAllowed(
+        client,
+        action,
+        spaceId,
+      ))
+    );
   }
 
   async assertSpacePermission(
@@ -56,7 +69,15 @@ export class McpPermissionService {
     spaceId: string,
   ): Promise<McpClientSpacePermission> {
     const permission = await this.getSpacePermission(client, spaceId);
-    if (!permission || !permission[MCP_PERMISSION_COLUMN[action]]) {
+    if (
+      !permission ||
+      !permission[MCP_PERMISSION_COLUMN[action]] ||
+      !(await this.effectivePermissionService.isClientActionAllowed(
+        client,
+        action,
+        spaceId,
+      ))
+    ) {
       throw new ForbiddenException('MCP permission denied');
     }
 
@@ -82,7 +103,52 @@ export class McpPermissionService {
     }
 
     const rows = await query.execute();
-    return rows.map((row) => row.spaceId);
+    return this.effectivePermissionService.filterClientSpaceIds(
+      client,
+      action,
+      rows.map((row) => row.spaceId),
+    );
+  }
+
+  async resolveEffectivePermissions(
+    client: McpAuthenticatedClient,
+    configuredSpaces: Array<{
+      spaceId: string;
+      permissions: Partial<Record<McpPermissionField, boolean>>;
+    }>,
+  ): Promise<Array<{ spaceId: string; permissions: McpPermissionValues }>> {
+    const ceilings =
+      await this.effectivePermissionService.getClientSpaceCeilings(
+        client,
+        configuredSpaces.map((item) => item.spaceId),
+      );
+    const ceilingBySpaceId = new Map(
+      ceilings.spaces.map((ceiling) => [ceiling.spaceId, ceiling.permissions]),
+    );
+
+    return configuredSpaces.map((item) => ({
+      spaceId: item.spaceId,
+      permissions: this.effectivePermissionService.intersectPermissions(
+        item.permissions,
+        ceilingBySpaceId.get(item.spaceId) ??
+          this.effectivePermissionService.emptyPermissions(),
+      ),
+    }));
+  }
+
+  async getEffectiveSpacePermission(
+    client: McpAuthenticatedClient,
+    spaceId: string,
+  ): Promise<McpPermissionValues | undefined> {
+    const permission = await this.getSpacePermission(client, spaceId);
+    if (!permission) {
+      return undefined;
+    }
+
+    const [effective] = await this.resolveEffectivePermissions(client, [
+      { spaceId, permissions: permission },
+    ]);
+    return effective?.permissions;
   }
 
   async resolvePageTarget(

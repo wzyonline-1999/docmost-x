@@ -20,6 +20,13 @@ export class McpClientIdDto {
   clientId!: string;
 }
 
+export class GetMcpPermissionMatrixDto extends McpClientIdDto {
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsUUID('all', { each: true })
+  spaceIds!: string[];
+}
+
 export class RotateMcpClientTokenDto extends McpClientIdDto {}
 
 export class McpSpacePermissionDto {

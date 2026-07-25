@@ -77,4 +77,54 @@ describe("MCP permission utilities", () => {
     expect(updates).toHaveLength(2);
     expect(updates.every((update) => update.canIndex)).toBe(true);
   });
+
+  it("applies bulk changes only to fields allowed by each native ceiling", () => {
+    const ceiling = getPermissionValues({
+      canSearch: true,
+      canRead: true,
+    });
+    const updates = buildPermissionUpdates(
+      "client-1",
+      [
+        {
+          id: "space-1",
+          permission: { canSearch: false, canCreate: false },
+          ceiling,
+        },
+      ],
+      {
+        canSearch: true,
+        canCreate: true,
+      },
+    );
+
+    expect(updates).toEqual([
+      expect.objectContaining({
+        clientId: "client-1",
+        spaceId: "space-1",
+        canSearch: true,
+        canCreate: false,
+      }),
+    ]);
+  });
+
+  it("preserves stale configured values while updating eligible fields", () => {
+    const ceiling = getPermissionValues({ canRead: true });
+    const updates = buildPermissionUpdates(
+      "client-1",
+      [
+        {
+          id: "space-1",
+          permission: { canRead: false, canUpdate: true },
+          ceiling,
+        },
+      ],
+      { canRead: true, canUpdate: false },
+    );
+
+    expect(updates[0]).toMatchObject({
+      canRead: true,
+      canUpdate: true,
+    });
+  });
 });

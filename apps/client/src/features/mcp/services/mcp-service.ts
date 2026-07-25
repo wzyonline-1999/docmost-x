@@ -5,6 +5,7 @@ import {
   IMcpClientInput,
   IMcpClientList,
   IMcpClientTokenResponse,
+  IMcpPermissionMatrix,
   IMcpSpacePermission,
   McpClientStatus,
   McpSpacePermissionInput,
@@ -59,6 +60,17 @@ export async function upsertMcpPermission(
   const response = await api.post<IMcpSpacePermission>(
     "/mcp/admin/clients/permissions/upsert",
     permission,
+  );
+  return response.data;
+}
+
+export async function getMcpPermissionMatrix(input: {
+  clientId: string;
+  spaceIds: string[];
+}): Promise<IMcpPermissionMatrix> {
+  const response = await api.post<IMcpPermissionMatrix>(
+    "/mcp/admin/clients/permissions/matrix",
+    input,
   );
   return response.data;
 }

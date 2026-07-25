@@ -1,6 +1,8 @@
+import { ForbiddenException } from '@nestjs/common';
 import type { KyselyDB } from '@docmost/db/types/kysely.types';
 import type { McpAuditService } from './mcp-audit.service';
 import { McpAdminService } from './mcp-admin.service';
+import type { McpEffectivePermissionService } from './mcp-effective-permission.service';
 import type { McpTokenService } from './mcp-token.service';
 import type { McpVectorIndexService } from './mcp-vector-index.service';
 
@@ -110,6 +112,41 @@ describe('McpAdminService vector eligibility reconciliation', () => {
   const vectorIndexService = {
     reconcileSpaceEligibility: jest.fn(),
   };
+  const allPermissions = {
+    canSearch: true,
+    canSemanticSearch: true,
+    canRead: true,
+    canCreate: true,
+    canUpdate: true,
+    canAppend: true,
+    canDelete: true,
+    canRestore: true,
+    canIndex: true,
+  };
+  const effectivePermissionService = {
+    getClientSpaceCeilings: jest.fn(),
+    assertPermissionPatchAllowed: jest.fn(),
+    emptyPermissions: jest.fn(() => ({
+      canSearch: false,
+      canSemanticSearch: false,
+      canRead: false,
+      canCreate: false,
+      canUpdate: false,
+      canAppend: false,
+      canDelete: false,
+      canRestore: false,
+      canIndex: false,
+    })),
+    intersectPermissions: jest.fn(
+      (configured: Record<string, boolean>, ceiling: Record<string, boolean>) =>
+        Object.fromEntries(
+          Object.keys(allPermissions).map((field) => [
+            field,
+            configured[field] === true && ceiling[field] === true,
+          ]),
+        ),
+    ),
+  };
 
   let service: McpAdminService;
 
@@ -132,11 +169,24 @@ describe('McpAdminService vector eligibility reconciliation', () => {
       ineligiblePageCount: 1,
       queuedJobIds: [],
     });
+    effectivePermissionService.getClientSpaceCeilings.mockImplementation(
+      async (_client: unknown, spaceIds: string[]) => ({
+        actorAvailable: true,
+        actorReason: null,
+        spaces: spaceIds.map((spaceId) => ({
+          spaceId,
+          actorRole: 'admin',
+          reason: null,
+          permissions: { ...allPermissions },
+        })),
+      }),
+    );
     service = new McpAdminService(
       db as unknown as KyselyDB,
       tokenService as unknown as McpTokenService,
       auditService as unknown as McpAuditService,
       vectorIndexService as unknown as McpVectorIndexService,
+      effectivePermissionService as unknown as McpEffectivePermissionService,
     );
   });
 
@@ -159,6 +209,41 @@ describe('McpAdminService vector eligibility reconciliation', () => {
       }),
       trx,
     );
+  });
+
+  it('does not enqueue indexing for a stale configured index permission', async () => {
+    effectivePermissionService.getClientSpaceCeilings.mockResolvedValueOnce({
+      actorAvailable: true,
+      actorReason: null,
+      spaces: [
+        {
+          spaceId: existingPermission.spaceId,
+          actorRole: null,
+          reason: 'no_space_access',
+          permissions: {
+            ...allPermissions,
+            canIndex: false,
+          },
+        },
+      ],
+    });
+    updateQuery.executeTakeFirstOrThrow.mockResolvedValueOnce({
+      ...existingPermission,
+      canRead: false,
+      canIndex: true,
+    });
+
+    await service.upsertSpacePermission(workspaceId, principal, {
+      clientId: client.id,
+      spaceId: existingPermission.spaceId,
+      canRead: false,
+    });
+
+    expect(vectorIndexService.reconcileSpaceEligibility).toHaveBeenCalledWith({
+      workspaceId,
+      spaceId: existingPermission.spaceId,
+      enqueueEligible: false,
+    });
   });
 
   it('inserts a new permission and audits null before state', async () => {
@@ -193,6 +278,79 @@ describe('McpAdminService vector eligibility reconciliation', () => {
       }),
       trx,
     );
+  });
+
+  it('rejects a newly enabled permission above the actor ceiling', async () => {
+    effectivePermissionService.assertPermissionPatchAllowed.mockImplementationOnce(
+      () => {
+        throw new ForbiddenException(
+          'MCP actor native permissions do not allow: canUpdate',
+        );
+      },
+    );
+
+    await expect(
+      service.upsertSpacePermission(workspaceId, principal, {
+        clientId: client.id,
+        spaceId: existingPermission.spaceId,
+        canUpdate: true,
+      }),
+    ).rejects.toThrow('MCP actor native permissions do not allow');
+
+    expect(updateQuery.executeTakeFirstOrThrow).not.toHaveBeenCalled();
+    expect(insertQuery.executeTakeFirstOrThrow).not.toHaveBeenCalled();
+    expect(auditService.log).not.toHaveBeenCalled();
+  });
+
+  it('returns configured, ceiling, and effective permission values', async () => {
+    effectivePermissionService.getClientSpaceCeilings.mockResolvedValueOnce({
+      actorAvailable: true,
+      actorReason: null,
+      spaces: [
+        {
+          spaceId: existingPermission.spaceId,
+          actorRole: 'reader',
+          reason: 'read_only',
+          permissions: {
+            ...allPermissions,
+            canCreate: false,
+            canUpdate: false,
+            canAppend: false,
+            canDelete: false,
+            canRestore: false,
+          },
+        },
+      ],
+    });
+
+    const result = await service.getPermissionMatrix(workspaceId, principal, {
+      clientId: client.id,
+      spaceIds: [existingPermission.spaceId],
+    });
+
+    expect(result).toMatchObject({
+      clientId: client.id,
+      actorAvailable: true,
+      spaces: [
+        {
+          spaceId: existingPermission.spaceId,
+          actorRole: 'reader',
+          reason: 'read_only',
+          configured: {
+            canRead: true,
+            canCreate: false,
+          },
+          ceiling: {
+            canRead: true,
+            canCreate: false,
+          },
+          effective: {
+            canRead: true,
+            canCreate: false,
+          },
+        },
+      ],
+    });
   });
 
   it('inserts then updates one active permission without a duplicate insert', async () => {

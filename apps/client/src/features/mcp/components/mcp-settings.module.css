@@ -50,6 +50,14 @@
   align-items: center;
   justify-content: center;
   width: 100%;
+  min-height: 32px;
+  border-radius: 4px;
+}
+
+.permissionCellInactive {
+  background: var(--mantine-color-orange-light);
+  outline: 1px dashed var(--mantine-color-orange-light-color);
+  outline-offset: -1px;
 }
 
 @media (max-width: 48em) {

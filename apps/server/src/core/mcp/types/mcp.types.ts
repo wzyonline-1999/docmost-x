@@ -1,7 +1,4 @@
-import type {
-  McpClient,
-  McpClientSpacePermission,
-} from '@docmost/db/types/entity.types';
+import type { McpClient } from '@docmost/db/types/entity.types';
 import type { Json } from '@docmost/db/types/db';
 
 export type McpPermissionAction =
@@ -15,9 +12,24 @@ export type McpPermissionAction =
   | 'restore'
   | 'index';
 
+export const MCP_PERMISSION_FIELDS = [
+  'canSearch',
+  'canSemanticSearch',
+  'canRead',
+  'canCreate',
+  'canUpdate',
+  'canAppend',
+  'canDelete',
+  'canRestore',
+  'canIndex',
+] as const;
+
+export type McpPermissionField = (typeof MCP_PERMISSION_FIELDS)[number];
+export type McpPermissionValues = Record<McpPermissionField, boolean>;
+
 export const MCP_PERMISSION_COLUMN: Record<
   McpPermissionAction,
-  keyof McpClientSpacePermission
+  McpPermissionField
 > = {
   search: 'canSearch',
   semanticSearch: 'canSemanticSearch',
@@ -32,6 +44,25 @@ export const MCP_PERMISSION_COLUMN: Record<
 
 export type McpClientStatus = 'active' | 'disabled' | 'expired';
 export type McpClientScope = 'personal' | 'workspace';
+export type McpActorSpaceRole = 'admin' | 'writer' | 'reader' | null;
+export type McpNativeAccessReason =
+  | 'actor_unmapped'
+  | 'actor_unavailable'
+  | 'no_space_access'
+  | 'read_only'
+  | null;
+
+export type McpClientActorContext = Pick<
+  McpClient,
+  'actorUserId' | 'workspaceId'
+>;
+
+export type McpSpacePermissionCeiling = {
+  spaceId: string;
+  actorRole: McpActorSpaceRole;
+  reason: McpNativeAccessReason;
+  permissions: McpPermissionValues;
+};
 
 export type McpAdminPrincipal = {
   userId: string;

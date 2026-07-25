@@ -3,66 +3,40 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectKysely } from 'nestjs-kysely';
-import { KyselyDB } from '@docmost/db/types/kysely.types';
 import { PagePermissionRepo } from '@docmost/db/repos/page/page-permission.repo';
-import { SpaceMemberRepo } from '@docmost/db/repos/space/space-member.repo';
 import { Page, User } from '@docmost/db/types/entity.types';
-import { isUserDisabled } from '../../../common/helpers';
-import SpaceAbilityFactory from '../../casl/abilities/space-ability.factory';
-import {
-  SpaceCaslAction,
-  SpaceCaslSubject,
-} from '../../casl/interfaces/space-ability.type';
 import { PageAccessService } from '../../page/page-access/page-access.service';
 import type { McpAuthenticatedClient } from '../types/mcp.types';
+import { McpEffectivePermissionService } from './mcp-effective-permission.service';
 
 type ActorPageTarget = Pick<Page, 'id' | 'spaceId'>;
 
 @Injectable()
 export class McpActorAccessService {
   constructor(
-    @InjectKysely() private readonly db: KyselyDB,
     private readonly pageAccessService: PageAccessService,
     private readonly pagePermissionRepo: PagePermissionRepo,
-    private readonly spaceAbility: SpaceAbilityFactory,
-    private readonly spaceMemberRepo: SpaceMemberRepo,
+    private readonly effectivePermissionService: McpEffectivePermissionService,
   ) {}
 
   async requireActor(client: McpAuthenticatedClient): Promise<User> {
-    if (!client.actorUserId) {
-      throw new ForbiddenException(
-        'MCP page tools require an actor user mapping',
-      );
-    }
-
-    const actor = await this.db
-      .selectFrom('users')
-      .selectAll()
-      .where('id', '=', client.actorUserId)
-      .where('workspaceId', '=', client.workspaceId)
-      .where('deletedAt', 'is', null)
-      .executeTakeFirst();
-
-    if (!actor || isUserDisabled(actor)) {
-      throw new ForbiddenException('MCP actor user is unavailable');
-    }
-
-    return actor;
+    return this.effectivePermissionService.requireActor(client);
   }
 
   async assertCanReadSpace(actor: User, spaceId: string): Promise<void> {
-    const ability = await this.getSpaceAbility(actor, spaceId);
-    if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)) {
-      throw new ForbiddenException('MCP actor lacks Docmost space access');
-    }
+    await this.effectivePermissionService.assertActorAction(
+      actor,
+      'read',
+      spaceId,
+    );
   }
 
   async assertCanCreateInSpace(actor: User, spaceId: string): Promise<void> {
-    const ability = await this.getSpaceAbility(actor, spaceId);
-    if (ability.cannot(SpaceCaslAction.Create, SpaceCaslSubject.Page)) {
-      throw new ForbiddenException('MCP actor lacks Docmost create access');
-    }
+    await this.effectivePermissionService.assertActorAction(
+      actor,
+      'create',
+      spaceId,
+    );
   }
 
   async assertCanViewPage(actor: User, page: ActorPageTarget): Promise<void> {
@@ -85,12 +59,9 @@ export class McpActorAccessService {
       return [];
     }
 
-    const actorSpaceIds = new Set(
-      await this.spaceMemberRepo.getUserSpaceIds(actor.id),
-    );
-    return [...new Set(candidateSpaceIds)].filter((spaceId) =>
-      actorSpaceIds.has(spaceId),
-    );
+    return this.effectivePermissionService.filterActorSpaceIds(actor, 'read', [
+      ...new Set(candidateSpaceIds),
+    ]);
   }
 
   async filterReadablePageIds(
@@ -103,17 +74,6 @@ export class McpActorAccessService {
       userId: actor.id,
       spaceId,
     });
-  }
-
-  private async getSpaceAbility(actor: User, spaceId: string) {
-    try {
-      return await this.spaceAbility.createForUser(actor, spaceId);
-    } catch (err) {
-      if (err instanceof NotFoundException) {
-        throw new ForbiddenException('MCP actor lacks Docmost space access');
-      }
-      throw err;
-    }
   }
 
   private async runMaskedPageCheck(

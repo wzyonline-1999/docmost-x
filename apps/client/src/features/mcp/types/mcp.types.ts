@@ -1,5 +1,12 @@
 export type McpClientStatus = "active" | "disabled" | "expired";
 export type McpClientScope = "personal" | "workspace";
+export type McpActorSpaceRole = "admin" | "writer" | "reader" | null;
+export type McpNativeAccessReason =
+  | "actor_unmapped"
+  | "actor_unavailable"
+  | "no_space_access"
+  | "read_only"
+  | null;
 
 export type McpPermissionField =
   | "canSearch"
@@ -34,6 +41,26 @@ export type McpSpacePermissionInput = {
   clientId: string;
   spaceId: string;
 } & Partial<Record<McpPermissionField, boolean>>;
+
+export type McpPermissionValues = Record<McpPermissionField, boolean>;
+
+export interface IMcpPermissionMatrixSpace {
+  spaceId: string;
+  actorRole: McpActorSpaceRole;
+  reason: McpNativeAccessReason;
+  ceiling: McpPermissionValues;
+  configured: McpPermissionValues;
+  effective: McpPermissionValues;
+  permission: IMcpSpacePermission | null;
+}
+
+export interface IMcpPermissionMatrix {
+  clientId: string;
+  actorUserId: string | null;
+  actorAvailable: boolean;
+  actorReason: McpNativeAccessReason;
+  spaces: IMcpPermissionMatrixSpace[];
+}
 
 export interface IMcpClient {
   id: string;

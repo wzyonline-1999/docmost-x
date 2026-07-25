@@ -1,6 +1,7 @@
 import {
   IMcpSpacePermission,
   McpPermissionField,
+  McpPermissionValues,
   McpSpacePermissionInput,
 } from "@/features/mcp/types/mcp.types";
 
@@ -18,8 +19,6 @@ export const MCP_PERMISSION_COLUMNS: ReadonlyArray<{
   { field: "canRestore", label: "Restore" },
   { field: "canIndex", label: "Index" },
 ];
-
-export type McpPermissionValues = Record<McpPermissionField, boolean>;
 
 export type McpPermissionSelectionState = {
   checked: boolean;
@@ -51,12 +50,20 @@ export function buildPermissionUpdates(
   spaces: ReadonlyArray<{
     id: string;
     permission?: Partial<IMcpSpacePermission>;
+    ceiling?: McpPermissionValues;
   }>,
   changes: Partial<McpPermissionValues>,
 ): McpSpacePermissionInput[] {
-  return spaces.flatMap(({ id, permission }) => {
+  return spaces.flatMap(({ id, permission, ceiling }) => {
     const current = getPermissionValues(permission);
-    const hasChanges = Object.entries(changes).some(
+    const eligibleChanges = Object.fromEntries(
+      Object.entries(changes).filter(
+        ([field, checked]) =>
+          checked !== undefined &&
+          ceiling?.[field as McpPermissionField] !== false,
+      ),
+    ) as Partial<McpPermissionValues>;
+    const hasChanges = Object.entries(eligibleChanges).some(
       ([field, checked]) =>
         checked !== undefined &&
         current[field as McpPermissionField] !== checked,
@@ -69,7 +76,7 @@ export function buildPermissionUpdates(
         clientId,
         spaceId: id,
         ...current,
-        ...changes,
+        ...eligibleChanges,
       },
     ];
   });

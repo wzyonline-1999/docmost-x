@@ -1,11 +1,9 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
-import type { KyselyDB } from '@docmost/db/types/kysely.types';
 import type { PagePermissionRepo } from '@docmost/db/repos/page/page-permission.repo';
-import type { SpaceMemberRepo } from '@docmost/db/repos/space/space-member.repo';
 import type { User } from '@docmost/db/types/entity.types';
-import type SpaceAbilityFactory from '../../casl/abilities/space-ability.factory';
 import type { PageAccessService } from '../../page/page-access/page-access.service';
 import { McpActorAccessService } from './mcp-actor-access.service';
+import type { McpEffectivePermissionService } from './mcp-effective-permission.service';
 
 describe('McpActorAccessService', () => {
   const actor = {
@@ -14,15 +12,6 @@ describe('McpActorAccessService', () => {
     deactivatedAt: null,
     deletedAt: null,
   } as unknown as User;
-  const executeTakeFirst = jest.fn();
-  const userQuery = {
-    selectAll: jest.fn().mockReturnThis(),
-    where: jest.fn().mockReturnThis(),
-    executeTakeFirst,
-  };
-  const db = {
-    selectFrom: jest.fn(() => userQuery),
-  };
   const pageAccessService = {
     validateCanView: jest.fn(),
     validateCanEdit: jest.fn(),
@@ -30,76 +19,64 @@ describe('McpActorAccessService', () => {
   const pagePermissionRepo = {
     filterAccessiblePageIds: jest.fn(),
   };
-  const spaceAbility = {
-    createForUser: jest.fn(),
-  };
-  const spaceMemberRepo = {
-    getUserSpaceIds: jest.fn(),
+  const effectivePermissionService = {
+    requireActor: jest.fn(),
+    assertActorAction: jest.fn(),
+    filterActorSpaceIds: jest.fn(),
   };
 
   let service: McpActorAccessService;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    executeTakeFirst.mockResolvedValue(actor);
+    effectivePermissionService.requireActor.mockResolvedValue(actor);
+    effectivePermissionService.assertActorAction.mockResolvedValue(undefined);
+    effectivePermissionService.filterActorSpaceIds.mockResolvedValue([
+      'space-1',
+    ]);
     pageAccessService.validateCanView.mockResolvedValue(undefined);
     pageAccessService.validateCanEdit.mockResolvedValue({
       hasRestriction: false,
     });
     pagePermissionRepo.filterAccessiblePageIds.mockResolvedValue(['page-1']);
-    spaceAbility.createForUser.mockResolvedValue({
-      cannot: jest.fn(() => false),
-    });
-    spaceMemberRepo.getUserSpaceIds.mockResolvedValue(['space-1']);
     service = new McpActorAccessService(
-      db as unknown as KyselyDB,
       pageAccessService as unknown as PageAccessService,
       pagePermissionRepo as unknown as PagePermissionRepo,
-      spaceAbility as unknown as SpaceAbilityFactory,
-      spaceMemberRepo as unknown as SpaceMemberRepo,
+      effectivePermissionService as unknown as McpEffectivePermissionService,
     );
   });
 
   it('fails closed when the MCP client has no actor mapping', async () => {
+    effectivePermissionService.requireActor.mockRejectedValueOnce(
+      new ForbiddenException('MCP page tools require an actor user mapping'),
+    );
+
     await expect(
       service.requireActor({
         actorUserId: null,
       } as never),
     ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(db.selectFrom).not.toHaveBeenCalled();
+    expect(effectivePermissionService.requireActor).toHaveBeenCalledWith({
+      actorUserId: null,
+    });
   });
 
-  it('loads only an active actor from the token workspace', async () => {
-    await expect(
-      service.requireActor({
-        actorUserId: actor.id,
-        workspaceId: actor.workspaceId,
-      } as never),
-    ).resolves.toBe(actor);
-    expect(userQuery.where).toHaveBeenCalledWith(
-      'workspaceId',
-      '=',
-      actor.workspaceId,
+  it('delegates actor resolution to the effective permission service', async () => {
+    const client = {
+      actorUserId: actor.id,
+      workspaceId: actor.workspaceId,
+    } as never;
+
+    await expect(service.requireActor(client)).resolves.toBe(actor);
+    expect(effectivePermissionService.requireActor).toHaveBeenCalledWith(
+      client,
     );
-    expect(userQuery.where).toHaveBeenCalledWith('deletedAt', 'is', null);
   });
 
   it('rejects an unavailable actor', async () => {
-    executeTakeFirst.mockResolvedValueOnce(undefined);
-
-    await expect(
-      service.requireActor({
-        actorUserId: actor.id,
-        workspaceId: actor.workspaceId,
-      } as never),
-    ).rejects.toThrow('MCP actor user is unavailable');
-  });
-
-  it.each([
-    { ...actor, deactivatedAt: new Date() },
-    { ...actor, deletedAt: new Date() },
-  ])('rejects a disabled actor row %p', async (unavailableActor) => {
-    executeTakeFirst.mockResolvedValueOnce(unavailableActor);
+    effectivePermissionService.requireActor.mockRejectedValueOnce(
+      new ForbiddenException('MCP actor user is unavailable'),
+    );
 
     await expect(
       service.requireActor({
@@ -115,16 +92,18 @@ describe('McpActorAccessService', () => {
   ])(
     'enforces native %s permission in the target space',
     async (_action, check) => {
-      spaceAbility.createForUser.mockResolvedValueOnce({
-        cannot: jest.fn(() => true),
-      });
+      effectivePermissionService.assertActorAction.mockRejectedValueOnce(
+        new ForbiddenException('MCP actor lacks Docmost space access'),
+      );
 
       await expect(check()).rejects.toThrow('MCP actor lacks Docmost');
     },
   );
 
   it('masks missing native space membership as a permission denial', async () => {
-    spaceAbility.createForUser.mockRejectedValueOnce(new NotFoundException());
+    effectivePermissionService.assertActorAction.mockRejectedValueOnce(
+      new ForbiddenException('MCP actor lacks Docmost space access'),
+    );
 
     await expect(
       service.assertCanReadSpace(actor, 'space-2'),
@@ -180,13 +159,20 @@ describe('McpActorAccessService', () => {
     await expect(
       service.filterReadableSpaceIds(actor, ['space-1', 'space-2', 'space-1']),
     ).resolves.toEqual(['space-1']);
+    expect(effectivePermissionService.filterActorSpaceIds).toHaveBeenCalledWith(
+      actor,
+      'read',
+      ['space-1', 'space-2'],
+    );
   });
 
   it('short-circuits an empty MCP space set', async () => {
     await expect(service.filterReadableSpaceIds(actor, [])).resolves.toEqual(
       [],
     );
-    expect(spaceMemberRepo.getUserSpaceIds).not.toHaveBeenCalled();
+    expect(
+      effectivePermissionService.filterActorSpaceIds,
+    ).not.toHaveBeenCalled();
   });
 
   it('delegates page restriction filtering to the native repository', async () => {

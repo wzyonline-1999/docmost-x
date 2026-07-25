@@ -10,6 +10,22 @@ const mocks = vi.hoisted(() => ({
   upsertMutate: vi.fn(),
 }));
 
+const emptyPermissions = {
+  canSearch: false,
+  canSemanticSearch: false,
+  canRead: false,
+  canCreate: false,
+  canUpdate: false,
+  canAppend: false,
+  canDelete: false,
+  canRestore: false,
+  canIndex: false,
+};
+
+const allPermissions = Object.fromEntries(
+  Object.keys(emptyPermissions).map((field) => [field, true]),
+);
+
 vi.mock("@/features/space/queries/space-query", () => ({
   useGetSpacesQuery: () => ({
     isLoading: false,
@@ -30,21 +46,63 @@ vi.mock("@/features/mcp/queries/mcp-query", () => ({
         {
           id: "client-1",
           name: "Codex",
-          permissions: [
-            {
-              clientId: "client-1",
-              spaceId: "space-1",
-              canSearch: true,
-              canSemanticSearch: false,
-              canRead: true,
-              canCreate: false,
-              canUpdate: false,
-              canAppend: false,
-              canDelete: false,
-              canRestore: false,
-              canIndex: false,
-            },
-          ],
+          capabilities: { canManagePermissions: true },
+          permissions: [],
+        },
+      ],
+    },
+  }),
+  useMcpPermissionMatrixQuery: () => ({
+    isLoading: false,
+    isError: false,
+    data: {
+      clientId: "client-1",
+      actorUserId: "actor-1",
+      actorAvailable: true,
+      actorReason: null,
+      spaces: [
+        {
+          spaceId: "space-1",
+          actorRole: "admin",
+          reason: null,
+          ceiling: allPermissions,
+          configured: {
+            ...emptyPermissions,
+            canSearch: true,
+            canRead: true,
+          },
+          effective: {
+            ...emptyPermissions,
+            canSearch: true,
+            canRead: true,
+          },
+          permission: {
+            id: "permission-1",
+            clientId: "client-1",
+            spaceId: "space-1",
+          },
+        },
+        {
+          spaceId: "space-2",
+          actorRole: "reader",
+          reason: "read_only",
+          ceiling: {
+            ...emptyPermissions,
+            canSearch: true,
+            canSemanticSearch: true,
+            canRead: true,
+            canIndex: true,
+          },
+          configured: {
+            ...emptyPermissions,
+            canUpdate: true,
+          },
+          effective: emptyPermissions,
+          permission: {
+            id: "permission-2",
+            clientId: "client-1",
+            spaceId: "space-2",
+          },
         },
       ],
     },
@@ -100,7 +158,7 @@ describe("McpPermissions", () => {
     vi.clearAllMocks();
   });
 
-  it("selects all permissions with one update per changed space", () => {
+  it("selects all eligible permissions without enabling permissions above the ceiling", () => {
     renderPermissions();
 
     const selectAll = screen.getByRole("checkbox", {
@@ -113,13 +171,20 @@ describe("McpPermissions", () => {
     expect(mocks.bulkMutate).toHaveBeenCalledOnce();
     const [updates] = mocks.bulkMutate.mock.calls[0];
     expect(updates).toHaveLength(2);
-    expect(
-      updates.every((update: Record<string, unknown>) =>
-        Object.entries(update)
-          .filter(([field]) => field.startsWith("can"))
-          .every(([, checked]) => checked === true),
-      ),
-    ).toBe(true);
+    expect(updates[0]).toMatchObject({
+      spaceId: "space-1",
+      canCreate: true,
+      canUpdate: true,
+    });
+    expect(updates[1]).toMatchObject({
+      spaceId: "space-2",
+      canSearch: true,
+      canSemanticSearch: true,
+      canRead: true,
+      canIndex: true,
+      canCreate: false,
+      canUpdate: true,
+    });
   });
 
   it("selects a permission column without changing existing permissions", () => {
@@ -138,8 +203,37 @@ describe("McpPermissions", () => {
         spaceId: "space-2",
         canSearch: true,
         canRead: false,
+        canUpdate: true,
       }),
     ]);
+  });
+
+  it("shows stale configured permissions and allows only clearing them", () => {
+    renderPermissions();
+
+    expect(
+      screen.getByText(/1 configured permission is inactive/),
+    ).toBeTruthy();
+
+    const inactiveUpdate = screen.getByRole("checkbox", {
+      name: "Update permission for Space Two (configured but inactive)",
+    });
+    expect((inactiveUpdate as HTMLInputElement).checked).toBe(true);
+    expect((inactiveUpdate as HTMLInputElement).disabled).toBe(false);
+
+    const unavailableCreate = screen.getByRole("checkbox", {
+      name: "Create permission for Space Two",
+    });
+    expect((unavailableCreate as HTMLInputElement).disabled).toBe(true);
+
+    fireEvent.click(inactiveUpdate);
+    expect(mocks.upsertMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: "client-1",
+        spaceId: "space-2",
+        canUpdate: false,
+      }),
+    );
   });
 
   it("centers every row control in a full-width wrapper", () => {

@@ -7,6 +7,7 @@ import type { KyselyDB } from '@docmost/db/types/kysely.types';
 import { ListMcpAuditLogsDto, ListMcpClientsDto } from '../dto/mcp-admin.dto';
 import type { McpAuditService } from './mcp-audit.service';
 import { McpAdminService } from './mcp-admin.service';
+import type { McpEffectivePermissionService } from './mcp-effective-permission.service';
 import type { McpTokenService } from './mcp-token.service';
 import type { McpVectorIndexService } from './mcp-vector-index.service';
 
@@ -127,6 +128,33 @@ describe('McpAdminService admin boundaries', () => {
   const vectorIndexService = {
     reconcileSpaceEligibility: jest.fn(),
   };
+  const allPermissions = {
+    canSearch: true,
+    canSemanticSearch: true,
+    canRead: true,
+    canCreate: true,
+    canUpdate: true,
+    canAppend: true,
+    canDelete: true,
+    canRestore: true,
+    canIndex: true,
+  };
+  const effectivePermissionService = {
+    getClientSpaceCeilings: jest.fn(),
+    assertPermissionPatchAllowed: jest.fn(),
+    emptyPermissions: jest.fn(() => ({
+      canSearch: false,
+      canSemanticSearch: false,
+      canRead: false,
+      canCreate: false,
+      canUpdate: false,
+      canAppend: false,
+      canDelete: false,
+      canRestore: false,
+      canIndex: false,
+    })),
+    intersectPermissions: jest.fn(),
+  };
   let service: McpAdminService;
 
   beforeEach(() => {
@@ -142,11 +170,24 @@ describe('McpAdminService admin boundaries', () => {
     });
     spaceQuery.execute.mockResolvedValue([{ id: permission.spaceId }]);
     auditQuery.execute.mockResolvedValue([auditLog]);
+    effectivePermissionService.getClientSpaceCeilings.mockImplementation(
+      async (_client: unknown, spaceIds: string[]) => ({
+        actorAvailable: true,
+        actorReason: null,
+        spaces: spaceIds.map((spaceId) => ({
+          spaceId,
+          actorRole: 'admin',
+          reason: null,
+          permissions: { ...allPermissions },
+        })),
+      }),
+    );
     service = new McpAdminService(
       db as unknown as KyselyDB,
       tokenService as unknown as McpTokenService,
       auditService as unknown as McpAuditService,
       vectorIndexService as unknown as McpVectorIndexService,
+      effectivePermissionService as unknown as McpEffectivePermissionService,
     );
   });
 

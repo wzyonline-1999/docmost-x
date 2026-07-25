@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Alert,
+  Badge,
   Checkbox,
   Loader,
   Select,
@@ -17,18 +18,71 @@ import {
   useDeleteMcpPermissionMutation,
   useBulkUpsertMcpPermissionsMutation,
   useMcpClientsQuery,
+  useMcpPermissionMatrixQuery,
   useUpsertMcpPermissionMutation,
 } from "@/features/mcp/queries/mcp-query";
-import { IMcpSpacePermission } from "@/features/mcp/types/mcp.types";
+import {
+  IMcpPermissionMatrixSpace,
+  IMcpSpacePermission,
+  McpNativeAccessReason,
+  McpPermissionField,
+  McpPermissionValues,
+} from "@/features/mcp/types/mcp.types";
 import {
   buildPermissionUpdates,
   getPermissionSelectionState,
-  getPermissionValues,
   MCP_PERMISSION_COLUMNS,
-  McpPermissionValues,
 } from "@/features/mcp/utils/mcp-permission-utils";
 import NoTableResults from "@/components/common/no-table-results";
 import classes from "./mcp-settings.module.css";
+
+function getNativeAccessDisplay(
+  row: IMcpPermissionMatrixSpace | undefined,
+  actorReason: McpNativeAccessReason | undefined,
+) {
+  if (row?.actorRole) {
+    return {
+      label: `Actor: ${row.actorRole[0].toUpperCase()}${row.actorRole.slice(1)}`,
+      color: row.actorRole === "reader" ? "blue" : "green",
+    };
+  }
+
+  const reason = row?.reason ?? actorReason;
+  const labels: Record<
+    Exclude<McpNativeAccessReason, "read_only" | null>,
+    string
+  > = {
+    actor_unmapped: "No actor mapping",
+    actor_unavailable: "Actor unavailable",
+    no_space_access: "No space access",
+  };
+
+  return {
+    label:
+      reason && reason !== "read_only"
+        ? labels[reason]
+        : "Native access unavailable",
+    color: "red",
+  };
+}
+
+function getUnavailablePermissionLabel(
+  row: IMcpPermissionMatrixSpace | undefined,
+) {
+  if (row?.reason === "read_only") {
+    return "The actor's read-only role does not allow this permission";
+  }
+  if (row?.reason === "no_space_access") {
+    return "The actor no longer has access to this space";
+  }
+  if (row?.reason === "actor_unmapped") {
+    return "This client has no actor mapping";
+  }
+  if (row?.reason === "actor_unavailable") {
+    return "The mapped actor is unavailable";
+  }
+  return "This permission is outside the actor's current native access";
+}
 
 export function McpPermissions() {
   const clientsQuery = useMcpClientsQuery({ limit: 100 });
@@ -41,52 +95,69 @@ export function McpPermissions() {
   const client = clientsQuery.data?.items.find(
     (item) => item.id === selectedClientId,
   );
+  const spaces = useMemo(
+    () => spacesQuery.data?.items ?? [],
+    [spacesQuery.data?.items],
+  );
+  const spaceIds = useMemo(() => spaces.map((space) => space.id), [spaces]);
+  const matrixQuery = useMcpPermissionMatrixQuery(selectedClientId, spaceIds);
   const canManagePermissions =
     client?.capabilities.canManagePermissions ?? false;
-  const permissionBySpace = useMemo(
+  const matrixBySpace = useMemo(
     () =>
       new Map(
-        client?.permissions.map((permission) => [
-          permission.spaceId,
-          permission,
-        ]) ?? [],
+        matrixQuery.data?.spaces.map((space) => [space.spaceId, space]) ?? [],
       ),
-    [client],
+    [matrixQuery.data],
   );
   const clientOptions =
     clientsQuery.data?.items.map((item) => ({
       value: item.id,
       label: item.name,
     })) ?? [];
-  const spaces = spacesQuery.data?.items ?? [];
   const isMutating = upsertMutation.isPending || bulkUpsertMutation.isPending;
-  const allSelection = getPermissionSelectionState(
-    spaces.flatMap((space) => {
-      const permission = permissionBySpace.get(space.id);
-      return MCP_PERMISSION_COLUMNS.map(
-        (column) => permission?.[column.field] ?? false,
-      );
+  const eligiblePermissionValues = spaces.flatMap((space) => {
+    const row = matrixBySpace.get(space.id);
+    return MCP_PERMISSION_COLUMNS.flatMap((column) =>
+      row?.ceiling[column.field] ? [row.configured[column.field]] : [],
+    );
+  });
+  const allSelection = getPermissionSelectionState(eligiblePermissionValues);
+  const columnSelection = new Map(
+    MCP_PERMISSION_COLUMNS.map((column) => {
+      const eligibleValues = spaces.flatMap((space) => {
+        const row = matrixBySpace.get(space.id);
+        return row?.ceiling[column.field] ? [row.configured[column.field]] : [];
+      });
+      return [
+        column.field,
+        {
+          ...getPermissionSelectionState(eligibleValues),
+          eligibleCount: eligibleValues.length,
+        },
+      ];
     }),
   );
-  const columnSelection = new Map(
-    MCP_PERMISSION_COLUMNS.map((column) => [
-      column.field,
-      getPermissionSelectionState(
-        spaces.map(
-          (space) => permissionBySpace.get(space.id)?.[column.field] ?? false,
-        ),
-      ),
-    ]),
-  );
+  const inactiveConfiguredCount =
+    matrixQuery.data?.spaces.reduce(
+      (count, row) =>
+        count +
+        MCP_PERMISSION_COLUMNS.filter(
+          (column) =>
+            row.configured[column.field] && !row.effective[column.field],
+        ).length,
+      0,
+    ) ?? 0;
 
   const togglePermission = (
     spaceId: string,
-    field: keyof McpPermissionValues,
+    field: McpPermissionField,
     checked: boolean,
   ) => {
     if (!selectedClientId || !canManagePermissions) return;
-    const current = permissionBySpace.get(spaceId);
-    const values = getPermissionValues(current);
+    const row = matrixBySpace.get(spaceId);
+    if (!row || (checked && !row.ceiling[field])) return;
+    const values = { ...row.configured };
     values[field] = checked;
     upsertMutation.mutate({ clientId: selectedClientId, spaceId, ...values });
   };
@@ -97,7 +168,8 @@ export function McpPermissions() {
       selectedClientId,
       spaces.map((space) => ({
         id: space.id,
-        permission: permissionBySpace.get(space.id),
+        permission: matrixBySpace.get(space.id)?.configured,
+        ceiling: matrixBySpace.get(space.id)?.ceiling,
       })),
       changes,
     );
@@ -160,8 +232,8 @@ export function McpPermissions() {
           w={{ base: "100%", sm: 360 }}
         />
         <Text size="xs" c="dimmed">
-          Changes are applied immediately and re-evaluated against the actor's
-          native page access.
+          Effective access is the intersection of these settings and the
+          actor&apos;s current native role.
         </Text>
       </div>
 
@@ -169,6 +241,29 @@ export function McpPermissions() {
         <Alert icon={<IconInfoCircle size={18} />} color="blue" mb="sm">
           This personal client belongs to another administrator. You can review
           its permissions, but only its owner can change them.
+        </Alert>
+      )}
+
+      {matrixQuery.data && !matrixQuery.data.actorAvailable && (
+        <Alert icon={<IconInfoCircle size={18} />} color="red" mb="sm">
+          The mapped actor is missing or unavailable. All configured permissions
+          are currently inactive.
+        </Alert>
+      )}
+
+      {inactiveConfiguredCount > 0 && (
+        <Alert icon={<IconInfoCircle size={18} />} color="orange" mb="sm">
+          {inactiveConfiguredCount} configured permission
+          {inactiveConfiguredCount === 1 ? " is" : "s are"} inactive under the
+          actor&apos;s current role. Orange checks can be cleared but cannot be
+          enabled again unless native access is restored.
+        </Alert>
+      )}
+
+      {matrixQuery.isError && (
+        <Alert icon={<IconInfoCircle size={18} />} color="red" mb="sm">
+          Effective permissions could not be loaded. Changes are disabled until
+          the permission matrix is available.
         </Alert>
       )}
 
@@ -186,6 +281,8 @@ export function McpPermissions() {
                       disabled={
                         !selectedClientId ||
                         !spaces.length ||
+                        !matrixQuery.data ||
+                        eligiblePermissionValues.length === 0 ||
                         !canManagePermissions ||
                         isMutating
                       }
@@ -213,6 +310,8 @@ export function McpPermissions() {
                           disabled={
                             !selectedClientId ||
                             !spaces.length ||
+                            !matrixQuery.data ||
+                            selection?.eligibleCount === 0 ||
                             !canManagePermissions ||
                             isMutating
                           }
@@ -233,7 +332,11 @@ export function McpPermissions() {
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {spacesQuery.isLoading || clientsQuery.isLoading ? (
+            {spacesQuery.isLoading ||
+            clientsQuery.isLoading ||
+            (Boolean(selectedClientId) &&
+              spaces.length > 0 &&
+              matrixQuery.isLoading) ? (
               <Table.Tr>
                 <Table.Td colSpan={11} ta="center" py="xl">
                   <Loader size="sm" />
@@ -241,7 +344,11 @@ export function McpPermissions() {
               </Table.Tr>
             ) : spacesQuery.data?.items.length ? (
               spacesQuery.data.items.map((space) => {
-                const permission = permissionBySpace.get(space.id);
+                const row = matrixBySpace.get(space.id);
+                const accessDisplay = getNativeAccessDisplay(
+                  row,
+                  matrixQuery.data?.actorReason,
+                );
                 return (
                   <Table.Tr key={space.id}>
                     <Table.Td>
@@ -251,32 +358,66 @@ export function McpPermissions() {
                       <Text size="xs" c="dimmed" lineClamp={1}>
                         {space.slug}
                       </Text>
+                      <Badge
+                        size="xs"
+                        variant="light"
+                        color={accessDisplay.color}
+                        mt={4}
+                      >
+                        {accessDisplay.label}
+                      </Badge>
                     </Table.Td>
-                    {MCP_PERMISSION_COLUMNS.map((column) => (
-                      <Table.Td key={column.field}>
-                        <div className={classes.permissionCell}>
-                          <Checkbox
-                            aria-label={`${column.label} permission for ${space.name}`}
-                            checked={permission?.[column.field] ?? false}
-                            disabled={
-                              !selectedClientId ||
-                              !canManagePermissions ||
-                              isMutating
+                    {MCP_PERMISSION_COLUMNS.map((column) => {
+                      const configured = row?.configured[column.field] ?? false;
+                      const effective = row?.effective[column.field] ?? false;
+                      const withinCeiling = row?.ceiling[column.field] ?? false;
+                      const inactive = configured && !effective;
+                      const disabled =
+                        !selectedClientId ||
+                        !matrixQuery.data ||
+                        !canManagePermissions ||
+                        isMutating ||
+                        (!withinCeiling && !configured);
+
+                      return (
+                        <Table.Td key={column.field}>
+                          <Tooltip
+                            label={
+                              inactive
+                                ? `Configured but inactive. ${getUnavailablePermissionLabel(row)}`
+                                : getUnavailablePermissionLabel(row)
                             }
-                            onChange={(event) =>
-                              togglePermission(
-                                space.id,
-                                column.field,
-                                event.currentTarget.checked,
-                              )
-                            }
-                          />
-                        </div>
-                      </Table.Td>
-                    ))}
+                            disabled={withinCeiling && !inactive}
+                          >
+                            <div
+                              className={`${classes.permissionCell} ${
+                                inactive ? classes.permissionCellInactive : ""
+                              }`}
+                              data-inactive={inactive || undefined}
+                            >
+                              <Checkbox
+                                aria-label={`${column.label} permission for ${space.name}${
+                                  inactive ? " (configured but inactive)" : ""
+                                }`}
+                                checked={configured}
+                                color={inactive ? "orange" : undefined}
+                                disabled={disabled}
+                                onChange={(event) =>
+                                  togglePermission(
+                                    space.id,
+                                    column.field,
+                                    event.currentTarget.checked,
+                                  )
+                                }
+                              />
+                            </div>
+                          </Tooltip>
+                        </Table.Td>
+                      );
+                    })}
                     <Table.Td>
                       <div className={classes.permissionCell}>
-                        {permission && (
+                        {row?.permission && (
                           <Tooltip
                             label={
                               canManagePermissions
@@ -290,7 +431,7 @@ export function McpPermissions() {
                               aria-label={`Remove all permissions for ${space.name}`}
                               disabled={!canManagePermissions}
                               onClick={() =>
-                                confirmRemove(permission, space.name)
+                                confirmRemove(row.permission!, space.name)
                               }
                             >
                               <IconTrash size={17} />

@@ -98,7 +98,9 @@ describe('McpToolService', () => {
     };
     const permissionService = {
       assertSpacePermission: jest.fn().mockResolvedValue({ canRead: true }),
-      getSpacePermission: jest.fn().mockResolvedValue({ canRead: true }),
+      getEffectiveSpacePermission: jest
+        .fn()
+        .mockResolvedValue({ canRead: true }),
     };
     const actorAccessService = {
       requireActor: jest.fn().mockResolvedValue(actor),
@@ -162,6 +164,117 @@ describe('McpToolService', () => {
       'resume_index_job',
       'cancel_index_job',
     ]);
+  });
+
+  it('reports only effective permissions when listing spaces', async () => {
+    const configuredRows = [
+      {
+        id: 'space-1',
+        name: 'Writable space',
+        slug: 'writable-space',
+        description: null,
+        visibility: 'private',
+        isPersonal: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        canSearch: true,
+        canSemanticSearch: false,
+        canRead: true,
+        canCreate: true,
+        canUpdate: true,
+        canAppend: false,
+        canDelete: false,
+        canRestore: false,
+        canIndex: true,
+      },
+      {
+        id: 'space-2',
+        name: 'Stale space',
+        slug: 'stale-space',
+        description: null,
+        visibility: 'private',
+        isPersonal: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        canSearch: false,
+        canSemanticSearch: false,
+        canRead: false,
+        canCreate: false,
+        canUpdate: true,
+        canAppend: false,
+        canDelete: false,
+        canRestore: false,
+        canIndex: false,
+      },
+    ];
+    const spaceQuery = {
+      innerJoin: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      execute: jest.fn().mockResolvedValue(configuredRows),
+    };
+    const permissionService = {
+      resolveEffectivePermissions: jest.fn().mockResolvedValue([
+        {
+          spaceId: 'space-1',
+          permissions: {
+            canSearch: true,
+            canSemanticSearch: false,
+            canRead: true,
+            canCreate: false,
+            canUpdate: false,
+            canAppend: false,
+            canDelete: false,
+            canRestore: false,
+            canIndex: true,
+          },
+        },
+        {
+          spaceId: 'space-2',
+          permissions: {
+            canSearch: false,
+            canSemanticSearch: false,
+            canRead: false,
+            canCreate: false,
+            canUpdate: false,
+            canAppend: false,
+            canDelete: false,
+            canRestore: false,
+            canIndex: false,
+          },
+        },
+      ]),
+    };
+    const actorAccessService = {
+      requireActor: jest.fn().mockResolvedValue(actor),
+      filterReadableSpaceIds: jest
+        .fn()
+        .mockResolvedValue(['space-1', 'space-2']),
+    };
+    const service = createService({
+      db: { selectFrom: jest.fn(() => spaceQuery) },
+      permissionService,
+      actorAccessService,
+    });
+
+    const result = await service.callTool(
+      { name: 'list_spaces', arguments: {} },
+      context,
+    );
+
+    expect(result.structuredContent).toEqual({
+      items: [
+        expect.objectContaining({
+          id: 'space-1',
+          permissions: expect.objectContaining({
+            canRead: true,
+            canCreate: false,
+            canUpdate: false,
+          }),
+        }),
+      ],
+    });
   });
 
   it('keeps the highest-scoring semantic chunk for each page', () => {
@@ -338,6 +451,10 @@ describe('McpToolService', () => {
     expect(permissionService.assertSpacePermission).toHaveBeenCalledWith(
       context.client,
       'read',
+      page.spaceId,
+    );
+    expect(permissionService.getEffectiveSpacePermission).toHaveBeenCalledWith(
+      context.client,
       page.spaceId,
     );
     expect(actorAccessService.assertCanViewPage).toHaveBeenCalledWith(

@@ -17,6 +17,7 @@ import { isUserDisabled } from '../../../common/helpers/utils';
 import {
   CreateMcpClientDto,
   DeleteMcpClientSpacePermissionDto,
+  GetMcpPermissionMatrixDto,
   ListMcpAuditLogsDto,
   ListMcpClientsDto,
   McpSpacePermissionDto,
@@ -26,12 +27,15 @@ import {
 import { McpAuditService } from './mcp-audit.service';
 import { McpTokenService } from './mcp-token.service';
 import type {
+  McpPermissionValues,
   McpAdminPrincipal,
   McpClientScope,
   McpClientStatus,
 } from '../types/mcp.types';
+import { MCP_PERMISSION_FIELDS } from '../types/mcp.types';
 import { getMcpErrorType } from '../utils/mcp-error.util';
 import { McpVectorIndexService } from './mcp-vector-index.service';
+import { McpEffectivePermissionService } from './mcp-effective-permission.service';
 
 type PublicMcpClient = {
   [key: string]: string | null | McpClientCapabilities;
@@ -100,29 +104,6 @@ type PublicMcpAuditLog = {
   createdAt: string;
 };
 
-type McpPermissionField =
-  | 'canSearch'
-  | 'canSemanticSearch'
-  | 'canRead'
-  | 'canCreate'
-  | 'canUpdate'
-  | 'canAppend'
-  | 'canDelete'
-  | 'canRestore'
-  | 'canIndex';
-
-const MCP_PERMISSION_FIELDS: readonly McpPermissionField[] = [
-  'canSearch',
-  'canSemanticSearch',
-  'canRead',
-  'canCreate',
-  'canUpdate',
-  'canAppend',
-  'canDelete',
-  'canRestore',
-  'canIndex',
-];
-
 @Injectable()
 export class McpAdminService {
   private readonly logger = new Logger(McpAdminService.name);
@@ -132,6 +113,7 @@ export class McpAdminService {
     private readonly tokenService: McpTokenService,
     private readonly auditService: McpAuditService,
     private readonly vectorIndexService: McpVectorIndexService,
+    private readonly effectivePermissionService: McpEffectivePermissionService,
   ) {}
 
   async createClient(
@@ -145,6 +127,24 @@ export class McpAdminService {
     const ownership = this.resolveNewClientOwnership(principal, dto);
     await this.assertActiveActorUser(workspaceId, ownership.actorUserId);
     await this.assertSpacesExist(workspaceId, requestedSpaceIds);
+    const permissionCeilings =
+      await this.effectivePermissionService.getClientSpaceCeilings(
+        {
+          workspaceId,
+          actorUserId: ownership.actorUserId,
+        },
+        requestedSpaceIds,
+      );
+    const ceilingBySpaceId = new Map(
+      permissionCeilings.spaces.map((ceiling) => [ceiling.spaceId, ceiling]),
+    );
+    for (const permission of dto.permissions ?? []) {
+      this.effectivePermissionService.assertPermissionPatchAllowed(
+        ceilingBySpaceId.get(permission.spaceId)?.permissions ??
+          this.effectivePermissionService.emptyPermissions(),
+        permission,
+      );
+    }
 
     const expiresAt = this.parseFutureDate(dto.expiresAt, 'expiresAt');
     const token = this.tokenService.generateToken();
@@ -194,6 +194,7 @@ export class McpAdminService {
           metadata: {
             permissionCount: dto.permissions?.length ?? 0,
             scope: ownership.scope,
+            nativePermissionCeilingsApplied: true,
           },
         },
         trx,
@@ -610,6 +611,13 @@ export class McpAdminService {
     );
     this.assertCanManageClient(client, principal);
     await this.assertSpacesExist(workspaceId, [dto.spaceId]);
+    const permissionCeilings =
+      await this.effectivePermissionService.getClientSpaceCeilings(client, [
+        dto.spaceId,
+      ]);
+    const permissionCeiling =
+      permissionCeilings.spaces[0]?.permissions ??
+      this.effectivePermissionService.emptyPermissions();
 
     const { existing, permission } = await this.db
       .transaction()
@@ -622,6 +630,12 @@ export class McpAdminService {
           .where('spaceId', '=', dto.spaceId)
           .where('deletedAt', 'is', null)
           .executeTakeFirst();
+
+        this.effectivePermissionService.assertPermissionPatchAllowed(
+          permissionCeiling,
+          dto,
+          current ?? undefined,
+        );
 
         const updatedPermission = current
           ? await trx
@@ -653,6 +667,17 @@ export class McpAdminService {
             toolName: 'mcp_admin.upsert_space_permission',
             before: current ? this.toPublicPermission(current) : null,
             after: this.toPublicPermission(updatedPermission),
+            metadata: {
+              actorRole: permissionCeilings.spaces[0]?.actorRole ?? null,
+              nativeAccessReason:
+                permissionCeilings.spaces[0]?.reason ??
+                permissionCeilings.actorReason,
+              effectivePermissions:
+                this.effectivePermissionService.intersectPermissions(
+                  updatedPermission,
+                  permissionCeiling,
+                ),
+            },
           },
           trx,
         );
@@ -661,14 +686,79 @@ export class McpAdminService {
       });
 
     if (existing?.canIndex || permission.canIndex) {
+      const effectiveCanIndex =
+        this.effectivePermissionService.intersectPermissions(
+          permission,
+          permissionCeiling,
+        ).canIndex;
       await this.reconcileVectorSpaces(
         workspaceId,
         [dto.spaceId],
-        permission.canIndex,
+        effectiveCanIndex,
       );
     }
 
     return this.toPublicPermission(permission);
+  }
+
+  async getPermissionMatrix(
+    workspaceId: string,
+    principal: McpAdminPrincipal,
+    dto: GetMcpPermissionMatrixDto,
+  ) {
+    const client = await this.findVisibleClientOrThrow(
+      workspaceId,
+      principal,
+      dto.clientId,
+    );
+    this.assertUniqueSpaceIds(dto.spaceIds);
+    await this.assertSpacesExist(workspaceId, dto.spaceIds);
+
+    const permissionCeilings =
+      await this.effectivePermissionService.getClientSpaceCeilings(
+        client,
+        dto.spaceIds,
+      );
+    const permissions =
+      dto.spaceIds.length === 0
+        ? []
+        : await this.db
+            .selectFrom('mcpClientSpacePermissions')
+            .selectAll()
+            .where('clientId', '=', client.id)
+            .where('workspaceId', '=', workspaceId)
+            .where('spaceId', 'in', dto.spaceIds)
+            .where('deletedAt', 'is', null)
+            .execute();
+    const permissionBySpaceId = new Map(
+      permissions.map((permission) => [permission.spaceId, permission]),
+    );
+
+    return {
+      clientId: client.id,
+      actorUserId: client.actorUserId,
+      actorAvailable: permissionCeilings.actorAvailable,
+      actorReason: permissionCeilings.actorReason,
+      spaces: permissionCeilings.spaces.map((ceiling) => {
+        const permission = permissionBySpaceId.get(ceiling.spaceId);
+        const configured = permission
+          ? this.toPermissionValues(permission)
+          : this.effectivePermissionService.emptyPermissions();
+
+        return {
+          spaceId: ceiling.spaceId,
+          actorRole: ceiling.actorRole,
+          reason: ceiling.reason,
+          ceiling: ceiling.permissions,
+          configured,
+          effective: this.effectivePermissionService.intersectPermissions(
+            configured,
+            ceiling.permissions,
+          ),
+          permission: permission ? this.toPublicPermission(permission) : null,
+        };
+      }),
+    };
   }
 
   async deleteSpacePermission(
@@ -1037,6 +1127,17 @@ export class McpAdminService {
       },
       {} as Partial<Record<(typeof MCP_PERMISSION_FIELDS)[number], boolean>>,
     );
+  }
+
+  private toPermissionValues(
+    permission: Partial<
+      Record<(typeof MCP_PERMISSION_FIELDS)[number], boolean>
+    >,
+  ): McpPermissionValues {
+    return MCP_PERMISSION_FIELDS.reduce((values, field) => {
+      values[field] = permission[field] === true;
+      return values;
+    }, {} as McpPermissionValues);
   }
 
   private toPublicClient(client: McpClient): PublicMcpClient {

@@ -15,6 +15,7 @@ describe('McpAdminController', () => {
     deleteClient: jest.fn(),
     rotateClientToken: jest.fn(),
     listAuditLogs: jest.fn(),
+    getPermissionMatrix: jest.fn(),
     upsertSpacePermission: jest.fn(),
     deleteSpacePermission: jest.fn(),
   };
@@ -47,6 +48,10 @@ describe('McpAdminController', () => {
       permissions: [],
     });
     adminService.listAuditLogs.mockResolvedValue({ items: [], meta: {} });
+    adminService.getPermissionMatrix.mockResolvedValue({
+      clientId: 'client-1',
+      spaces: [],
+    });
     controller = new McpAdminController(
       adminService as unknown as McpAdminService,
       workspaceAbility as unknown as WorkspaceAbilityFactory,
@@ -102,6 +107,29 @@ describe('McpAdminController', () => {
 
     expect(response).toEqual({ items: [], meta: {} });
     expect(adminService.listAuditLogs).toHaveBeenCalledWith(
+      'workspace-1',
+      adminPrincipal,
+      dto,
+    );
+  });
+
+  it('returns the effective permission matrix for workspace API admins', async () => {
+    const dto = {
+      clientId: 'client-1',
+      spaceIds: ['space-1'],
+    };
+
+    await expect(
+      controller.getPermissionMatrix(
+        dto,
+        adminUser as unknown as User,
+        workspace as unknown as Workspace,
+      ),
+    ).resolves.toEqual({
+      clientId: 'client-1',
+      spaces: [],
+    });
+    expect(adminService.getPermissionMatrix).toHaveBeenCalledWith(
       'workspace-1',
       adminPrincipal,
       dto,
@@ -203,6 +231,16 @@ describe('McpAdminController', () => {
           workspace as unknown as Workspace,
         ),
       adminService.listAuditLogs,
+    ],
+    [
+      'get permission matrix',
+      () =>
+        controller.getPermissionMatrix(
+          { clientId: 'client-1', spaceIds: ['space-1'] },
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.getPermissionMatrix,
     ],
     [
       'upsert permission',
