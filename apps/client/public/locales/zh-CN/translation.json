@@ -1424,6 +1424,8 @@
   "Event": "事件",
   "Tool": "工具",
   "Resource": "资源",
+  "Start time": "开始时间",
+  "End time": "结束时间",
   "Administrator": "管理员",
   "View audit details": "查看审计详情",
   "View details for": "查看详情：",

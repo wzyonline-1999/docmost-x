@@ -1424,6 +1424,8 @@
   "Event": "Event",
   "Tool": "Tool",
   "Resource": "Resource",
+  "Start time": "Start time",
+  "End time": "End time",
   "Administrator": "Administrator",
   "View audit details": "View audit details",
   "View details for": "View details for",

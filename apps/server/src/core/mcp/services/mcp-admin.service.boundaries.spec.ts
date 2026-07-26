@@ -437,7 +437,27 @@ describe('McpAdminService admin boundaries', () => {
       '<=',
       new Date('2026-07-04T00:00:00.000Z'),
     );
-    expect(auditQuery.where).toHaveBeenCalledWith(expect.any(Function));
+    const searchPredicate = auditQuery.where.mock.calls.find(
+      ([predicate]) => typeof predicate === 'function',
+    )?.[0];
+    expect(searchPredicate).toEqual(expect.any(Function));
+
+    const castExpression = Symbol('resource-id-as-text');
+    const expressionBuilder = Object.assign(
+      jest.fn((left, operator, right) => ({ left, operator, right })),
+      {
+        cast: jest.fn(() => castExpression),
+        or: jest.fn((conditions) => conditions),
+      },
+    );
+    searchPredicate(expressionBuilder);
+
+    expect(expressionBuilder.cast).toHaveBeenCalledWith('resourceId', 'text');
+    expect(expressionBuilder).toHaveBeenCalledWith(
+      castExpression,
+      'ilike',
+      '%request%',
+    );
     expect(result.items).toEqual([
       expect.objectContaining({
         id: auditLog.id,

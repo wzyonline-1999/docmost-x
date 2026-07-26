@@ -185,7 +185,7 @@ export function McpAuditLog() {
         <Group grow align="flex-end" wrap="nowrap">
           <TextInput
             type="datetime-local"
-            label={t("From")}
+            label={t("Start time")}
             value={from}
             max={to || undefined}
             onChange={(input) => {
@@ -195,7 +195,7 @@ export function McpAuditLog() {
           />
           <TextInput
             type="datetime-local"
-            label={t("To")}
+            label={t("End time")}
             value={to}
             min={from || undefined}
             onChange={(input) => {

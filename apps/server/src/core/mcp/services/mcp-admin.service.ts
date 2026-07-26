@@ -591,7 +591,7 @@ export class McpAdminService {
           eb('event', 'ilike', searchTerm),
           eb('toolName', 'ilike', searchTerm),
           eb('resourceType', 'ilike', searchTerm),
-          eb('resourceId', 'ilike', searchTerm),
+          eb(eb.cast<string>('resourceId', 'text'), 'ilike', searchTerm),
           eb('requestId', 'ilike', searchTerm),
         ]),
       );
