@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import type { KyselyDB } from '@docmost/db/types/kysely.types';
 import type { McpAuditService } from './mcp-audit.service';
 import { McpAdminService } from './mcp-admin.service';
@@ -66,6 +66,7 @@ describe('McpAdminService vector eligibility reconciliation', () => {
     selectAll: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
+    forUpdate: jest.fn().mockReturnThis(),
     execute: jest.fn(),
     executeTakeFirst: jest.fn(),
   };
@@ -302,6 +303,49 @@ describe('McpAdminService vector eligibility reconciliation', () => {
     expect(auditService.log).not.toHaveBeenCalled();
   });
 
+  it('rejects a stale permission update before mutating or auditing', async () => {
+    await expect(
+      service.upsertSpacePermission(workspaceId, principal, {
+        clientId: client.id,
+        spaceId: existingPermission.spaceId,
+        expectedUpdatedAt: '2026-01-01T00:00:00.000Z',
+        canRead: false,
+      }),
+    ).rejects.toThrow(ConflictException);
+
+    expect(permissionQuery.forUpdate).toHaveBeenCalled();
+    expect(updateQuery.executeTakeFirstOrThrow).not.toHaveBeenCalled();
+    expect(auditService.log).not.toHaveBeenCalled();
+  });
+
+  it('accepts a permission update with the current version', async () => {
+    await expect(
+      service.upsertSpacePermission(workspaceId, principal, {
+        clientId: client.id,
+        spaceId: existingPermission.spaceId,
+        expectedUpdatedAt: existingPermission.updatedAt.toISOString(),
+        canRead: false,
+      }),
+    ).resolves.toEqual(expect.objectContaining({ id: existingPermission.id }));
+
+    expect(updateQuery.executeTakeFirstOrThrow).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an expected existing permission that was removed', async () => {
+    permissionQuery.executeTakeFirst.mockResolvedValueOnce(undefined);
+
+    await expect(
+      service.upsertSpacePermission(workspaceId, principal, {
+        clientId: client.id,
+        spaceId: existingPermission.spaceId,
+        expectedUpdatedAt: existingPermission.updatedAt.toISOString(),
+        canRead: true,
+      }),
+    ).rejects.toThrow(ConflictException);
+
+    expect(insertQuery.executeTakeFirstOrThrow).not.toHaveBeenCalled();
+  });
+
   it('updates and inserts a permission batch in one transaction', async () => {
     const secondSpaceId = 'space-2';
     const insertedPermission = {
@@ -381,6 +425,25 @@ describe('McpAdminService vector eligibility reconciliation', () => {
     expect(insertQuery.executeTakeFirstOrThrow).not.toHaveBeenCalled();
     expect(auditService.log).not.toHaveBeenCalled();
     expect(vectorIndexService.reconcileSpaceEligibility).not.toHaveBeenCalled();
+  });
+
+  it('rolls back a stale permission batch before the first write', async () => {
+    await expect(
+      service.bulkUpsertSpacePermissions(workspaceId, principal, {
+        clientId: client.id,
+        permissions: [
+          {
+            spaceId: existingPermission.spaceId,
+            expectedUpdatedAt: '2026-01-01T00:00:00.000Z',
+            canRead: false,
+          },
+        ],
+      }),
+    ).rejects.toThrow(ConflictException);
+
+    expect(updateQuery.executeTakeFirstOrThrow).not.toHaveBeenCalled();
+    expect(insertQuery.executeTakeFirstOrThrow).not.toHaveBeenCalled();
+    expect(auditService.log).not.toHaveBeenCalled();
   });
 
   it('returns configured, ceiling, and effective permission values', async () => {
@@ -489,6 +552,19 @@ describe('McpAdminService vector eligibility reconciliation', () => {
       spaceId: existingPermission.spaceId,
       enqueueEligible: false,
     });
+  });
+
+  it('rejects deleting a permission that changed after it was loaded', async () => {
+    await expect(
+      service.deleteSpacePermission(workspaceId, principal, {
+        clientId: client.id,
+        spaceId: existingPermission.spaceId,
+        expectedUpdatedAt: '2026-01-01T00:00:00.000Z',
+      }),
+    ).rejects.toThrow(ConflictException);
+
+    expect(updateQuery.execute).not.toHaveBeenCalled();
+    expect(auditService.log).not.toHaveBeenCalled();
   });
 
   it('does not reconcile vector eligibility when permission audit fails', async () => {

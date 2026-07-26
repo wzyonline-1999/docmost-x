@@ -42,6 +42,7 @@ export interface IMcpSpacePermission {
 export type McpSpacePermissionInput = {
   clientId: string;
   spaceId: string;
+  expectedUpdatedAt?: string | null;
 } & Partial<Record<McpPermissionField, boolean>>;
 
 export type McpPermissionValues = Record<McpPermissionField, boolean>;
@@ -132,7 +133,7 @@ export interface IMcpAuditLog {
 
 export interface IMcpAuditLogList {
   items: IMcpAuditLog[];
-  meta: { limit: number; count: number };
+  meta: IPaginationMeta;
 }
 
 export interface IMcpAuditFilters {
@@ -146,4 +147,6 @@ export interface IMcpAuditFilters {
   to?: string;
   query?: string;
   limit?: number;
+  cursor?: string;
+  beforeCursor?: string;
 }

@@ -292,11 +292,15 @@ export function McpPermissions() {
     if (!selectedClientId || !canManagePermissions) return;
     const row = matrixBySpace.get(spaceId);
     if (!row || (checked && !row.ceiling[field])) return;
-    const values = { ...row.configured, [field]: checked };
 
     markMutation((callbacks) =>
       upsertMutation.mutate(
-        { clientId: selectedClientId, spaceId, ...values },
+        {
+          clientId: selectedClientId,
+          spaceId,
+          expectedUpdatedAt: row.permission?.updatedAt ?? null,
+          [field]: checked,
+        },
         callbacks,
       ),
     );
@@ -315,7 +319,7 @@ export function McpPermissions() {
       selectedClientId,
       spaces.map((space) => ({
         id: space.id,
-        permission: matrixBySpace.get(space.id)?.configured,
+        permission: matrixBySpace.get(space.id)?.permission ?? undefined,
         ceiling: matrixBySpace.get(space.id)?.ceiling,
       })),
       changes,
@@ -379,6 +383,7 @@ export function McpPermissions() {
             {
               clientId: permission.clientId,
               spaceId: permission.spaceId,
+              expectedUpdatedAt: permission.updatedAt,
             },
             callbacks,
           ),

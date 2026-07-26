@@ -22,7 +22,6 @@ import {
 import {
   IMcpAuditFilters,
   IMcpClientInput,
-  IMcpSpacePermission,
   McpClientStatus,
   McpSpacePermissionInput,
 } from "@/features/mcp/types/mcp.types";
@@ -31,6 +30,9 @@ const showMutationError = (error: Error) => {
   const message = error?.["response"]?.data?.message ?? error.message;
   notifications.show({ message, color: "red" });
 };
+
+const getMutationStatus = (error: Error): number | undefined =>
+  error?.["response"]?.status;
 
 export function useMcpClientsQuery(params?: {
   query?: string;
@@ -135,25 +137,38 @@ export function useRotateMcpClientTokenMutation() {
 }
 
 export function useUpsertMcpPermissionMutation() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (
-      permission: Partial<IMcpSpacePermission> & {
-        clientId: string;
-        spaceId: string;
-      },
-    ) => upsertMcpPermission(permission),
+    mutationFn: (permission: McpSpacePermissionInput) =>
+      upsertMcpPermission(permission),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
       queryClient.invalidateQueries({
         queryKey: ["mcp-permission-matrix"],
       });
     },
-    onError: showMutationError,
+    onError: (error) => {
+      if (getMutationStatus(error) === 409) {
+        notifications.show({
+          title: t("Permission conflict"),
+          message: t(
+            "These permissions changed in another session. The latest values have been reloaded; review them and try again.",
+          ),
+          color: "orange",
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["mcp-permission-matrix"],
+        });
+        return;
+      }
+      showMutationError(error);
+    },
   });
 }
 
 export function useBulkUpsertMcpPermissionsMutation() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (permissions: McpSpacePermissionInput[]) =>
@@ -164,7 +179,19 @@ export function useBulkUpsertMcpPermissionsMutation() {
         queryKey: ["mcp-permission-matrix"],
       });
     },
-    onError: showMutationError,
+    onError: (error) => {
+      if (getMutationStatus(error) === 409) {
+        notifications.show({
+          title: t("Permission conflict"),
+          message: t(
+            "These permissions changed in another session. The latest values have been reloaded; review them and try again.",
+          ),
+          color: "orange",
+        });
+        return;
+      }
+      showMutationError(error);
+    },
   });
 }
 
@@ -180,7 +207,22 @@ export function useDeleteMcpPermissionMutation() {
       });
       notifications.show({ message: t("Space permission removed") });
     },
-    onError: showMutationError,
+    onError: (error) => {
+      if (getMutationStatus(error) === 409) {
+        notifications.show({
+          title: t("Permission conflict"),
+          message: t(
+            "These permissions changed in another session. The latest values have been reloaded; review them and try again.",
+          ),
+          color: "orange",
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["mcp-permission-matrix"],
+        });
+        return;
+      }
+      showMutationError(error);
+    },
   });
 }
 
@@ -188,5 +230,6 @@ export function useMcpAuditLogsQuery(filters?: IMcpAuditFilters) {
   return useQuery({
     queryKey: ["mcp-audit-logs", filters],
     queryFn: () => getMcpAuditLogs(filters),
+    placeholderData: keepPreviousData,
   });
 }

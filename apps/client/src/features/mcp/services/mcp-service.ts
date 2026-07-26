@@ -106,6 +106,7 @@ export async function getMcpPermissionMatrix(input: {
 export async function deleteMcpPermission(input: {
   clientId: string;
   spaceId: string;
+  expectedUpdatedAt?: string | null;
 }): Promise<void> {
   await api.post("/mcp/admin/clients/permissions/delete", input);
 }

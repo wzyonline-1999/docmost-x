@@ -13,6 +13,7 @@ import {
 import { IconCheck, IconCopy, IconKey } from "@tabler/icons-react";
 import { useClipboard } from "@mantine/hooks";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { IMcpClientTokenResponse } from "@/features/mcp/types/mcp.types";
 import classes from "./mcp-settings.module.css";
 
@@ -22,14 +23,17 @@ type McpTokenModalProps = {
 };
 
 export function McpTokenModal({ response, onClose }: McpTokenModalProps) {
+  const { t } = useTranslation();
   const clipboard = useClipboard({ timeout: 1500 });
-  const [confirmed, setConfirmed] = useState(false);
+  const [confirmedToken, setConfirmedToken] = useState<string | null>(null);
+  const confirmed =
+    Boolean(response?.token) && confirmedToken === response?.token;
 
   return (
     <Modal
       opened={Boolean(response)}
       onClose={() => undefined}
-      title="MCP bearer token"
+      title={t("MCP bearer token")}
       centered
       closeOnClickOutside={false}
       closeOnEscape={false}
@@ -37,21 +41,28 @@ export function McpTokenModal({ response, onClose }: McpTokenModalProps) {
     >
       <Stack gap="md">
         <Alert color="yellow" icon={<IconKey size={18} />}>
-          This token is shown once. Store it in your password manager before
-          closing this dialog.
+          {t(
+            "This token is shown once. Store it in your password manager before closing this dialog.",
+          )}
         </Alert>
-        <Text size="sm" fw={500}>
-          {response?.client.name}
-        </Text>
+        <div>
+          <Text size="xs" c="dimmed">
+            {t("Client")}
+          </Text>
+          <Text size="sm" fw={500}>
+            {response?.client.name}
+          </Text>
+        </div>
         <Group gap="xs" wrap="nowrap" align="flex-start">
           <Code block className={classes.tokenValue}>
             {response?.token ?? ""}
           </Code>
-          <Tooltip label={clipboard.copied ? "Copied" : "Copy token"}>
+          <Tooltip label={clipboard.copied ? t("Copied") : t("Copy token")}>
             <ActionIcon
               variant="default"
               size="lg"
-              aria-label="Copy MCP token"
+              aria-label={t("Copy MCP token")}
+              disabled={!response?.token}
               onClick={() => clipboard.copy(response?.token ?? "")}
             >
               {clipboard.copied ? (
@@ -64,12 +75,16 @@ export function McpTokenModal({ response, onClose }: McpTokenModalProps) {
         </Group>
         <Checkbox
           checked={confirmed}
-          onChange={(event) => setConfirmed(event.currentTarget.checked)}
-          label="I stored this token in a secure password manager."
+          onChange={(event) =>
+            setConfirmedToken(
+              event.currentTarget.checked ? (response?.token ?? null) : null,
+            )
+          }
+          label={t("I stored this token in a secure password manager.")}
         />
         <Group justify="flex-end">
           <Button disabled={!confirmed} onClick={onClose}>
-            Done
+            {t("Done")}
           </Button>
         </Group>
       </Stack>

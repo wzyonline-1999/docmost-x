@@ -131,6 +131,16 @@ export class UpdateMcpClientDto extends McpClientIdDto {
 export class UpsertMcpClientSpacePermissionDto extends McpSpacePermissionDto {
   @IsUUID()
   clientId!: string;
+
+  @IsOptional()
+  @IsDateString()
+  expectedUpdatedAt?: string | null;
+}
+
+export class BulkMcpSpacePermissionDto extends McpSpacePermissionDto {
+  @IsOptional()
+  @IsDateString()
+  expectedUpdatedAt?: string | null;
 }
 
 export class BulkUpsertMcpClientSpacePermissionsDto extends McpClientIdDto {
@@ -138,13 +148,17 @@ export class BulkUpsertMcpClientSpacePermissionsDto extends McpClientIdDto {
   @ArrayMinSize(1)
   @ArrayMaxSize(100)
   @ValidateNested({ each: true })
-  @Type(() => McpSpacePermissionDto)
-  permissions!: McpSpacePermissionDto[];
+  @Type(() => BulkMcpSpacePermissionDto)
+  permissions!: BulkMcpSpacePermissionDto[];
 }
 
 export class DeleteMcpClientSpacePermissionDto extends McpClientIdDto {
   @IsUUID()
   spaceId!: string;
+
+  @IsOptional()
+  @IsDateString()
+  expectedUpdatedAt?: string | null;
 }
 
 export class ListMcpAuditLogsDto extends PaginationOptions {

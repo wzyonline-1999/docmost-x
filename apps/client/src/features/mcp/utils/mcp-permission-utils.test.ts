@@ -29,17 +29,25 @@ describe("MCP permission utilities", () => {
     expect(getPermissionSelectionState(values)).toEqual(expected);
   });
 
-  it("updates only changed spaces and preserves other permission fields", () => {
+  it("updates only changed spaces and submits only the intended fields", () => {
     const updates = buildPermissionUpdates(
       "client-1",
       [
         {
           id: "space-1",
-          permission: { canSearch: true, canRead: true },
+          permission: {
+            canSearch: true,
+            canRead: true,
+            updatedAt: "2026-07-01T00:00:00.000Z",
+          },
         },
         {
           id: "space-2",
-          permission: { canSearch: false, canRead: true },
+          permission: {
+            canSearch: false,
+            canRead: true,
+            updatedAt: "2026-07-02T00:00:00.000Z",
+          },
         },
       ],
       { canSearch: true },
@@ -50,9 +58,10 @@ describe("MCP permission utilities", () => {
       clientId: "client-1",
       spaceId: "space-2",
       canSearch: true,
-      canRead: true,
-      canCreate: false,
+      expectedUpdatedAt: "2026-07-02T00:00:00.000Z",
     });
+    expect(updates[0]).not.toHaveProperty("canRead");
+    expect(updates[0]).not.toHaveProperty("canCreate");
   });
 
   it("can apply all permission fields in one update per space", () => {
@@ -76,6 +85,9 @@ describe("MCP permission utilities", () => {
 
     expect(updates).toHaveLength(2);
     expect(updates.every((update) => update.canIndex)).toBe(true);
+    expect(updates.every((update) => update.expectedUpdatedAt === null)).toBe(
+      true,
+    );
   });
 
   it("applies bulk changes only to fields allowed by each native ceiling", () => {
@@ -99,12 +111,12 @@ describe("MCP permission utilities", () => {
     );
 
     expect(updates).toEqual([
-      expect.objectContaining({
+      {
         clientId: "client-1",
         spaceId: "space-1",
+        expectedUpdatedAt: null,
         canSearch: true,
-        canCreate: false,
-      }),
+      },
     ]);
   });
 
@@ -144,7 +156,7 @@ describe("MCP permission utilities", () => {
 
     expect(updates[0]).toMatchObject({
       canRead: true,
-      canUpdate: false,
     });
+    expect(updates[0]).not.toHaveProperty("canUpdate");
   });
 });

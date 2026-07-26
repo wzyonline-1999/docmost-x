@@ -1,7 +1,20 @@
-import { Button, Group, Modal, Select, Stack, TextInput } from "@mantine/core";
+import {
+  Alert,
+  Button,
+  Group,
+  Loader,
+  Modal,
+  Select,
+  Stack,
+  Text,
+  TextInput,
+} from "@mantine/core";
 import { useForm } from "@mantine/form";
+import { useDebouncedValue } from "@mantine/hooks";
+import { IconAlertCircle, IconRefresh } from "@tabler/icons-react";
 import { useAtomValue } from "jotai";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { currentUserAtom } from "@/features/user/atoms/current-user-atom";
 import { useWorkspaceMembersQuery } from "@/features/workspace/queries/workspace-query";
 import {
@@ -37,9 +50,15 @@ export function McpClientFormModal({
   onClose,
   onToken,
 }: McpClientFormModalProps) {
+  const { t } = useTranslation();
   const currentUser = useAtomValue(currentUserAtom);
   const { isOwner } = useUserRole();
-  const membersQuery = useWorkspaceMembersQuery({ limit: 100 });
+  const [actorSearch, setActorSearch] = useState("");
+  const [debouncedActorSearch] = useDebouncedValue(actorSearch.trim(), 300);
+  const membersQuery = useWorkspaceMembersQuery({
+    query: debouncedActorSearch || undefined,
+    limit: 25,
+  });
   const createMutation = useCreateMcpClientMutation();
   const updateMutation = useUpdateMcpClientMutation();
   const form = useForm<FormValues>({
@@ -51,7 +70,7 @@ export function McpClientFormModal({
       status: "active",
     },
     validate: {
-      name: (value) => (value.trim() ? null : "Name is required"),
+      name: (value) => (value.trim() ? null : t("Name is required")),
     },
   });
 
@@ -73,68 +92,92 @@ export function McpClientFormModal({
     form.resetDirty();
   }, [opened, client?.id, currentUser?.user.id]);
 
-  const actorOptions =
-    membersQuery.data?.items.map((member) => ({
-      value: member.id,
-      label: `${member.name} (${member.email})`,
-    })) ?? [];
+  const actorOptions = useMemo(() => {
+    const options =
+      membersQuery.data?.items.map((member) => ({
+        value: member.id,
+        label: `${member.name} (${member.email})`,
+      })) ?? [];
+    const selectedActorId = form.values.actorUserId;
+    if (
+      selectedActorId &&
+      !options.some((option) => option.value === selectedActorId)
+    ) {
+      options.unshift({
+        value: selectedActorId,
+        label: `${t("Current actor")} (${selectedActorId.slice(0, 8)})`,
+      });
+    }
+    return options;
+  }, [form.values.actorUserId, membersQuery.data?.items, t]);
   const pending = createMutation.isPending || updateMutation.isPending;
+  const closeModal = () => {
+    setActorSearch("");
+    onClose();
+  };
 
   const submit = form.onSubmit(async (values) => {
     const expiresAt = values.expiresAt
       ? new Date(values.expiresAt).toISOString()
       : null;
-    if (client) {
-      await updateMutation.mutateAsync({
-        clientId: client.id,
-        name: values.name.trim(),
-        actorUserId: values.actorUserId,
-        expiresAt,
-        status: values.status,
-      });
-      onClose();
-      return;
-    }
+    try {
+      if (client) {
+        await updateMutation.mutateAsync({
+          clientId: client.id,
+          name: values.name.trim(),
+          actorUserId: values.actorUserId,
+          expiresAt,
+          status: values.status,
+        });
+        closeModal();
+        return;
+      }
 
-    const response = await createMutation.mutateAsync({
-      name: values.name.trim(),
-      scope: values.scope,
-      actorUserId:
-        values.scope === "personal" ? currentUser?.user.id : values.actorUserId,
-      expiresAt: expiresAt ?? undefined,
-      permissions: [],
-    });
-    onClose();
-    onToken(response);
+      const response = await createMutation.mutateAsync({
+        name: values.name.trim(),
+        scope: values.scope,
+        actorUserId:
+          values.scope === "personal"
+            ? currentUser?.user.id
+            : values.actorUserId,
+        expiresAt: expiresAt ?? undefined,
+        permissions: [],
+      });
+      closeModal();
+      onToken(response);
+    } catch {
+      // Mutation hooks display the server error and keep the form open.
+    }
   });
 
   return (
     <Modal
       opened={opened}
-      onClose={onClose}
-      title={client ? "Edit MCP client" : "Create MCP client"}
+      onClose={pending ? () => undefined : closeModal}
+      title={client ? t("Edit MCP client") : t("Create MCP client")}
       centered
       closeOnClickOutside={!pending}
+      closeOnEscape={!pending}
     >
       <form onSubmit={submit}>
         <Stack gap="md">
           <TextInput
-            label="Name"
-            placeholder="Codex knowledge access"
+            label={t("Name")}
+            placeholder={t("Codex knowledge access")}
             maxLength={120}
             required
             {...form.getInputProps("name")}
           />
           <Select
-            label="Ownership"
+            label={t("Ownership")}
             description={
               form.values.scope === "personal"
-                ? "Only you can manage or rotate this client."
-                : "Only the workspace owner can manage this shared client."
+                ? t("Only you can manage or rotate this client.")
+                : t("Only the workspace owner can manage this shared client.")
             }
             data={[
-              { value: "personal", label: "Personal client" },
-              { value: "workspace", label: "Workspace client" },
+              { value: "personal", label: t("Personal client") },
+              { value: "workspace", label: t("Workspace client") },
             ]}
             allowDeselect={false}
             disabled={Boolean(client) || !isOwner}
@@ -148,46 +191,75 @@ export function McpClientFormModal({
               );
             }}
           />
+          {membersQuery.isError && form.values.scope === "workspace" && (
+            <Alert
+              icon={<IconAlertCircle size={17} />}
+              color="red"
+              title={t("Workspace members could not be loaded")}
+            >
+              <Group justify="space-between" align="center" wrap="wrap">
+                <Text size="sm">
+                  {t("Check the connection and try loading members again.")}
+                </Text>
+                <Button
+                  variant="light"
+                  color="red"
+                  size="xs"
+                  leftSection={<IconRefresh size={14} />}
+                  onClick={() => membersQuery.refetch()}
+                >
+                  {t("Retry")}
+                </Button>
+              </Group>
+            </Alert>
+          )}
           <Select
-            label="Actor user"
+            label={t("Actor user")}
             description={
               form.values.scope === "personal"
-                ? "Personal clients always use your Docmost permissions."
-                : "Native Docmost page permissions are evaluated as this user."
+                ? t("Personal clients always use your Docmost permissions.")
+                : t(
+                    "Native Docmost page permissions are evaluated as this user.",
+                  )
             }
-            placeholder="Select a workspace member"
+            placeholder={t("Search workspace members")}
             data={actorOptions}
+            searchValue={actorSearch}
+            onSearchChange={setActorSearch}
+            nothingFoundMessage={t("No members found")}
             searchable
             clearable
-            disabled={
-              membersQuery.isLoading || form.values.scope === "personal"
+            rightSection={
+              membersQuery.isFetching &&
+              form.values.scope === "workspace" && <Loader size={14} />
             }
+            disabled={membersQuery.isError || form.values.scope === "personal"}
             {...form.getInputProps("actorUserId")}
           />
           <TextInput
             type="datetime-local"
-            label="Expires at"
-            description="Leave empty for no expiration."
+            label={t("Expires at")}
+            description={t("Leave empty for no expiration.")}
             min={toLocalDateTimeInput(new Date().toISOString())}
             {...form.getInputProps("expiresAt")}
           />
           {client && (
             <Select
-              label="Status"
+              label={t("Status")}
               data={[
-                { value: "active", label: "Active" },
-                { value: "disabled", label: "Disabled" },
+                { value: "active", label: t("Active") },
+                { value: "disabled", label: t("Disabled") },
               ]}
               allowDeselect={false}
               {...form.getInputProps("status")}
             />
           )}
           <Group justify="flex-end">
-            <Button variant="default" onClick={onClose} disabled={pending}>
-              Cancel
+            <Button variant="default" onClick={closeModal} disabled={pending}>
+              {t("Cancel")}
             </Button>
             <Button type="submit" loading={pending}>
-              {client ? "Save" : "Create"}
+              {client ? t("Save") : t("Create")}
             </Button>
           </Group>
         </Stack>

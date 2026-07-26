@@ -76,7 +76,7 @@ export function buildPermissionUpdates(
       {
         clientId,
         spaceId: id,
-        ...current,
+        expectedUpdatedAt: permission?.updatedAt ?? null,
         ...eligibleChanges,
       },
     ];

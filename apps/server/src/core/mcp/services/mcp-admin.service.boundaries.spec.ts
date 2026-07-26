@@ -445,6 +445,14 @@ describe('McpAdminService admin boundaries', () => {
         requestId: auditLog.requestId,
       }),
     ]);
+    expect(auditQuery.limit).toHaveBeenCalledWith(51);
+    expect(result.meta).toEqual({
+      limit: 50,
+      hasNextPage: false,
+      hasPrevPage: false,
+      nextCursor: null,
+      prevCursor: null,
+    });
   });
 
   it('rejects inverted audit date ranges before querying logs', async () => {

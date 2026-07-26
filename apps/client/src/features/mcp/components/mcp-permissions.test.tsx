@@ -113,6 +113,10 @@ function makeMatrixQuery() {
             id: "permission-1",
             clientId: "client-1",
             spaceId: "space-1",
+            ...emptyPermissions,
+            canSearch: true,
+            canRead: true,
+            updatedAt: "2026-07-01T00:00:00.000Z",
           },
         },
         {
@@ -135,6 +139,9 @@ function makeMatrixQuery() {
             id: "permission-2",
             clientId: "client-1",
             spaceId: "space-2",
+            ...emptyPermissions,
+            canUpdate: true,
+            updatedAt: "2026-07-02T00:00:00.000Z",
           },
         },
       ],
@@ -255,9 +262,9 @@ describe("McpPermissions", () => {
       canSemanticSearch: true,
       canRead: true,
       canIndex: true,
-      canCreate: false,
-      canUpdate: true,
     });
+    expect(updates[1]).not.toHaveProperty("canCreate");
+    expect(updates[1]).not.toHaveProperty("canUpdate");
   });
 
   it("selects a permission column without changing existing permissions", () => {
@@ -276,8 +283,7 @@ describe("McpPermissions", () => {
           clientId: "client-1",
           spaceId: "space-2",
           canSearch: true,
-          canRead: false,
-          canUpdate: true,
+          expectedUpdatedAt: "2026-07-02T00:00:00.000Z",
         }),
       ],
       expect.objectContaining({
@@ -285,6 +291,9 @@ describe("McpPermissions", () => {
         onSuccess: expect.any(Function),
       }),
     );
+    const [updates] = mocks.bulkMutate.mock.calls[0];
+    expect(updates[0]).not.toHaveProperty("canRead");
+    expect(updates[0]).not.toHaveProperty("canUpdate");
   });
 
   it("shows stale configured permissions and allows only clearing them", () => {
@@ -316,12 +325,16 @@ describe("McpPermissions", () => {
         clientId: "client-1",
         spaceId: "space-2",
         canUpdate: false,
+        expectedUpdatedAt: "2026-07-02T00:00:00.000Z",
       }),
       expect.objectContaining({
         onError: expect.any(Function),
         onSuccess: expect.any(Function),
       }),
     );
+    const [update] = mocks.upsertMutate.mock.calls[0];
+    expect(update).not.toHaveProperty("canRead");
+    expect(update).not.toHaveProperty("canSearch");
   });
 
   it("clears stale and active grants together with the explicit page action", () => {

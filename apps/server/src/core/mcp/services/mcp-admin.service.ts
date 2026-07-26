@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -532,22 +533,20 @@ export class McpAdminService {
       ? null
       : await this.listOwnedClientIds(workspaceId, principal.userId);
     if (visibleClientIds?.length === 0) {
-      return { items: [], meta: { limit, count: 0 } };
+      return { items: [], meta: this.emptyPaginationMeta(limit) };
     }
     if (
       dto.clientId &&
       visibleClientIds &&
       !visibleClientIds.includes(dto.clientId)
     ) {
-      return { items: [], meta: { limit, count: 0 } };
+      return { items: [], meta: this.emptyPaginationMeta(limit) };
     }
 
     let query = this.db
       .selectFrom('mcpAuditLogs')
       .selectAll()
-      .where('workspaceId', '=', workspaceId)
-      .orderBy('createdAt', 'desc')
-      .limit(limit);
+      .where('workspaceId', '=', workspaceId);
 
     if (visibleClientIds) {
       query = query.where('clientId', 'in', visibleClientIds);
@@ -598,14 +597,23 @@ export class McpAdminService {
       );
     }
 
-    const logs = await query.execute();
+    const result = await executeWithCursorPagination(query, {
+      perPage: limit,
+      cursor: dto.cursor,
+      beforeCursor: dto.beforeCursor,
+      fields: [
+        { expression: 'createdAt', direction: 'desc' },
+        { expression: 'id', direction: 'desc' },
+      ],
+      parseCursor: (cursor) => ({
+        createdAt: new Date(cursor.createdAt),
+        id: cursor.id,
+      }),
+    });
 
     return {
-      items: logs.map((log) => this.toPublicAuditLog(log)),
-      meta: {
-        limit,
-        count: logs.length,
-      },
+      items: result.items.map((log) => this.toPublicAuditLog(log)),
+      meta: result.meta,
     };
   }
 
@@ -639,31 +647,40 @@ export class McpAdminService {
           .where('workspaceId', '=', workspaceId)
           .where('spaceId', '=', dto.spaceId)
           .where('deletedAt', 'is', null)
+          .forUpdate()
           .executeTakeFirst();
 
+        this.assertPermissionVersion(current, dto.expectedUpdatedAt);
         this.effectivePermissionService.assertPermissionPatchAllowed(
           permissionCeiling,
           dto,
           current ?? undefined,
         );
 
-        const updatedPermission = current
-          ? await trx
-              .updateTable('mcpClientSpacePermissions')
-              .set({
-                ...this.toPermissionPatch(dto),
-                updatedAt: new Date(),
-              })
-              .where('id', '=', current.id)
-              .returningAll()
-              .executeTakeFirstOrThrow()
-          : await trx
+        let updatedPermission: McpClientSpacePermission;
+        if (current) {
+          updatedPermission = await trx
+            .updateTable('mcpClientSpacePermissions')
+            .set({
+              ...this.toPermissionPatch(dto),
+              updatedAt: new Date(),
+            })
+            .where('id', '=', current.id)
+            .returningAll()
+            .executeTakeFirstOrThrow();
+        } else {
+          try {
+            updatedPermission = await trx
               .insertInto('mcpClientSpacePermissions')
               .values(
                 this.toPermissionInsertValues(dto.clientId, workspaceId, dto),
               )
               .returningAll()
               .executeTakeFirstOrThrow();
+          } catch (error) {
+            this.rethrowPermissionInsertConflict(error);
+          }
+        }
 
         await this.auditService.log(
           {
@@ -727,7 +744,12 @@ export class McpAdminService {
     );
     this.assertCanManageClient(client, principal);
 
-    const spaceIds = dto.permissions.map((permission) => permission.spaceId);
+    const requestedPermissions = [...dto.permissions].sort((left, right) =>
+      left.spaceId.localeCompare(right.spaceId),
+    );
+    const spaceIds = requestedPermissions.map(
+      (permission) => permission.spaceId,
+    );
     this.assertUniqueSpaceIds(spaceIds);
     await this.assertSpacesExist(workspaceId, spaceIds);
 
@@ -748,6 +770,8 @@ export class McpAdminService {
         .where('workspaceId', '=', workspaceId)
         .where('spaceId', 'in', spaceIds)
         .where('deletedAt', 'is', null)
+        .orderBy('spaceId', 'asc')
+        .forUpdate()
         .execute();
       const currentBySpaceId = new Map(
         currentPermissions.map((permission) => [
@@ -761,12 +785,16 @@ export class McpAdminService {
         ceiling: McpPermissionValues;
       }> = [];
 
-      for (const requestedPermission of dto.permissions) {
+      for (const requestedPermission of requestedPermissions) {
         const current = currentBySpaceId.get(requestedPermission.spaceId);
         const ceiling =
           ceilingBySpaceId.get(requestedPermission.spaceId)?.permissions ??
           this.effectivePermissionService.emptyPermissions();
 
+        this.assertPermissionVersion(
+          current,
+          requestedPermission.expectedUpdatedAt,
+        );
         this.effectivePermissionService.assertPermissionPatchAllowed(
           ceiling,
           requestedPermission,
@@ -774,23 +802,26 @@ export class McpAdminService {
         );
       }
 
-      for (const requestedPermission of dto.permissions) {
+      for (const requestedPermission of requestedPermissions) {
         const current = currentBySpaceId.get(requestedPermission.spaceId);
         const ceiling =
           ceilingBySpaceId.get(requestedPermission.spaceId)?.permissions ??
           this.effectivePermissionService.emptyPermissions();
 
-        const updatedPermission = current
-          ? await trx
-              .updateTable('mcpClientSpacePermissions')
-              .set({
-                ...this.toPermissionPatch(requestedPermission),
-                updatedAt: new Date(),
-              })
-              .where('id', '=', current.id)
-              .returningAll()
-              .executeTakeFirstOrThrow()
-          : await trx
+        let updatedPermission: McpClientSpacePermission;
+        if (current) {
+          updatedPermission = await trx
+            .updateTable('mcpClientSpacePermissions')
+            .set({
+              ...this.toPermissionPatch(requestedPermission),
+              updatedAt: new Date(),
+            })
+            .where('id', '=', current.id)
+            .returningAll()
+            .executeTakeFirstOrThrow();
+        } else {
+          try {
+            updatedPermission = await trx
               .insertInto('mcpClientSpacePermissions')
               .values(
                 this.toPermissionInsertValues(
@@ -801,6 +832,10 @@ export class McpAdminService {
               )
               .returningAll()
               .executeTakeFirstOrThrow();
+          } catch (error) {
+            this.rethrowPermissionInsertConflict(error);
+          }
+        }
 
         await this.auditService.log(
           {
@@ -946,11 +981,16 @@ export class McpAdminService {
         .where('workspaceId', '=', workspaceId)
         .where('spaceId', '=', dto.spaceId)
         .where('deletedAt', 'is', null)
+        .forUpdate()
         .executeTakeFirst();
 
       if (!current) {
+        if (typeof dto.expectedUpdatedAt !== 'undefined') {
+          throw this.permissionConflict();
+        }
         throw new NotFoundException('MCP permission not found');
       }
+      this.assertPermissionVersion(current, dto.expectedUpdatedAt);
 
       await trx
         .updateTable('mcpClientSpacePermissions')
@@ -1180,6 +1220,54 @@ export class McpAdminService {
       return 20;
     }
     return Math.min(Math.max(limit, 1), 100);
+  }
+
+  private emptyPaginationMeta(limit: number) {
+    return {
+      limit,
+      hasNextPage: false,
+      hasPrevPage: false,
+      nextCursor: null,
+      prevCursor: null,
+    };
+  }
+
+  private assertPermissionVersion(
+    current: McpClientSpacePermission | undefined,
+    expectedUpdatedAt: string | null | undefined,
+  ): void {
+    if (typeof expectedUpdatedAt === 'undefined') {
+      return;
+    }
+
+    if (
+      expectedUpdatedAt === null ||
+      !current ||
+      this.toIsoDate(current.updatedAt) !==
+        new Date(expectedUpdatedAt).toISOString()
+    ) {
+      if (expectedUpdatedAt === null && !current) {
+        return;
+      }
+      throw this.permissionConflict();
+    }
+  }
+
+  private rethrowPermissionInsertConflict(error: unknown): never {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String(error.code)
+        : null;
+    if (code === '23505') {
+      throw this.permissionConflict();
+    }
+    throw error;
+  }
+
+  private permissionConflict(): ConflictException {
+    return new ConflictException(
+      'MCP permission changed since it was loaded. Refresh and try again.',
+    );
   }
 
   private async listClientPermissions(
