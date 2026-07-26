@@ -11,7 +11,7 @@ import { InjectKysely } from 'nestjs-kysely';
 import { sql } from 'kysely';
 import { validate as isValidUUID } from 'uuid';
 import type { Json, JsonObject } from '@docmost/db/types/db';
-import { KyselyDB } from '@docmost/db/types/kysely.types';
+import { KyselyDB, KyselyTransaction } from '@docmost/db/types/kysely.types';
 import { Page, User } from '@docmost/db/types/entity.types';
 import { PageRepo } from '@docmost/db/repos/page/page.repo';
 import {
@@ -2098,68 +2098,82 @@ export class McpToolService {
         .execute();
       semanticItems = mapRows(rows);
     } else {
-      const maxCandidates = this.getVectorAnnMaxCandidates();
-      let candidateLimit = this.getVectorAnnCandidateLimit(limit);
-      semanticItems = [];
+      semanticItems = await this.withHnswIterativeScan(async (trx) => {
+        const maxCandidates = this.getVectorAnnMaxCandidates();
+        let candidateLimit = this.getVectorAnnCandidateLimit(limit);
+        let items: SearchItem[] = [];
 
-      while (true) {
-        let candidateQuery = this.db
-          .selectFrom('docmostMcpChunks as chunks')
-          .innerJoin('pages', (join) =>
-            join
-              .onRef('pages.id', '=', 'chunks.pageId')
-              .onRef('pages.workspaceId', '=', 'chunks.workspaceId'),
-          )
-          .select([
-            'chunks.pageId',
-            'pages.spaceId',
-            'pages.title',
-            'pages.updatedAt',
-            'chunks.content',
-            'chunks.metadata',
-            sql<number>`1 - (${distance})`.as('score'),
-          ])
-          .where('chunks.workspaceId', '=', context.client.workspaceId)
-          .where('pages.workspaceId', '=', context.client.workspaceId)
-          .where('pages.spaceId', 'in', spaceIds)
-          .where(
-            this.actorAccessService.getReadablePagePredicate(
-              resolvedActor,
-              'pages.id',
-            ),
-          );
+        while (true) {
+          let candidateQuery = trx
+            .selectFrom('docmostMcpChunks as chunks')
+            .innerJoin('pages', (join) =>
+              join
+                .onRef('pages.id', '=', 'chunks.pageId')
+                .onRef('pages.workspaceId', '=', 'chunks.workspaceId'),
+            )
+            .select([
+              'chunks.pageId',
+              'pages.spaceId',
+              'pages.title',
+              'pages.updatedAt',
+              'chunks.content',
+              'chunks.metadata',
+              sql<number>`1 - (${distance})`.as('score'),
+            ])
+            .where('chunks.workspaceId', '=', context.client.workspaceId)
+            .where('pages.workspaceId', '=', context.client.workspaceId)
+            .where('pages.spaceId', 'in', spaceIds)
+            .where(
+              this.actorAccessService.getReadablePagePredicate(
+                resolvedActor,
+                'pages.id',
+              ),
+            );
 
-        if (scopedPageIds !== undefined) {
-          candidateQuery = candidateQuery.where(
-            sql<boolean>`pages.id = ANY(${scopedPageIds}::uuid[])`,
-          );
+          if (scopedPageIds !== undefined) {
+            candidateQuery = candidateQuery.where(
+              sql<boolean>`pages.id = ANY(${scopedPageIds}::uuid[])`,
+            );
+          }
+
+          const rows = await candidateQuery
+            .where('pages.deletedAt', 'is', null)
+            .where(
+              'chunks.embeddingModel',
+              '=',
+              this.environmentService.getEmbeddingModel(),
+            )
+            .where('chunks.deletedAt', 'is', null)
+            .orderBy(distance, 'asc')
+            .limit(candidateLimit)
+            .execute();
+          items = mapRows(rows).slice(0, limit);
+
+          if (
+            items.length >= limit ||
+            rows.length < candidateLimit ||
+            candidateLimit >= maxCandidates
+          ) {
+            break;
+          }
+          candidateLimit = Math.min(maxCandidates, candidateLimit * 2);
         }
 
-        const rows = await candidateQuery
-          .where('pages.deletedAt', 'is', null)
-          .where(
-            'chunks.embeddingModel',
-            '=',
-            this.environmentService.getEmbeddingModel(),
-          )
-          .where('chunks.deletedAt', 'is', null)
-          .orderBy(distance, 'asc')
-          .limit(candidateLimit)
-          .execute();
-        semanticItems = mapRows(rows).slice(0, limit);
-
-        if (
-          semanticItems.length >= limit ||
-          rows.length < candidateLimit ||
-          candidateLimit >= maxCandidates
-        ) {
-          break;
-        }
-        candidateLimit = Math.min(maxCandidates, candidateLimit * 2);
-      }
+        return items;
+      });
     }
 
     return this.filterSearchItemsForActor(resolvedActor, semanticItems);
+  }
+
+  private async withHnswIterativeScan<T>(
+    callback: (trx: KyselyTransaction) => Promise<T>,
+  ): Promise<T> {
+    return this.db.transaction().execute(async (trx) => {
+      // Filtered HNSW scans otherwise stop after the default ef_search window.
+      await sql`SET LOCAL hnsw.iterative_scan = strict_order`.execute(trx);
+      return callback(trx);
+    });
   }
 
   private async resolveSearchRootPageIds(

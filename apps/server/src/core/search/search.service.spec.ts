@@ -282,6 +282,11 @@ describe('SearchService', () => {
       } as never,
       pageTreeScopeService as never,
     );
+    jest
+      .spyOn(annService as never, 'withHnswIterativeScan' as never)
+      .mockImplementation((async (
+        callback: (trx: unknown) => Promise<unknown>,
+      ) => callback(db)) as never);
 
     const result = await (annService as any).semanticSearchPage(
       {
@@ -293,6 +298,7 @@ describe('SearchService', () => {
     );
 
     expect(annQuery.distinctOn).not.toHaveBeenCalled();
+    expect((annService as any).withHnswIterativeScan).toHaveBeenCalledTimes(1);
     expect(annQuery.limit).toHaveBeenNthCalledWith(1, 200);
     expect(annQuery.limit).toHaveBeenNthCalledWith(2, 400);
     expect(result.map((item: SearchResponseDto) => item.id)).toEqual([

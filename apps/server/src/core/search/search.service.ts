@@ -25,6 +25,7 @@ import { EnvironmentService } from '../../integrations/environment/environment.s
 import { McpEmbeddingService } from '../mcp/services/mcp-embedding.service';
 import { formatPgVector } from '../mcp/utils/mcp-vector-sql.util';
 import { PageTreeScopeService } from '../page/services/page-tree-scope.service';
+import { KyselyTransaction } from '@docmost/db/types/kysely.types';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const tsquery = require('pg-tsquery')();
@@ -461,83 +462,95 @@ export class SearchService {
       return mapRows(rows);
     }
 
-    const targetCount = limit + offset;
-    const maxCandidates = Math.max(
-      targetCount,
-      this.getVectorAnnMaxCandidates(),
-    );
-    let candidateLimit = this.getVectorAnnCandidateLimit(targetCount);
-    let dedupedRows: Parameters<typeof mapRows>[0] = [];
-
-    while (true) {
-      const rows = await this.db
-        .selectFrom('docmostMcpChunks as chunks')
-        .innerJoin('pages', (join) =>
-          join
-            .onRef('pages.id', '=', 'chunks.pageId')
-            .onRef('pages.workspaceId', '=', 'chunks.workspaceId'),
-        )
-        .select([
-          'pages.id',
-          'pages.slugId',
-          'pages.title',
-          'pages.icon',
-          'pages.parentPageId',
-          'pages.creatorId',
-          'pages.createdAt',
-          'pages.updatedAt',
-          'chunks.content as highlight',
-          sql<number>`1 - (${distance})`.as('rank'),
-          searchBreadcrumbsSelection(),
-        ])
-        .select((eb) => this.pageRepo.withSpace(eb))
-        .where('chunks.workspaceId', '=', opts.workspaceId)
-        .where('pages.workspaceId', '=', opts.workspaceId)
-        .where('pages.spaceId', 'in', spaceIds)
-        .$if(Boolean(searchParams.creatorId), (qb) =>
-          qb.where('pages.creatorId', '=', searchParams.creatorId),
-        )
-        .$if(scopedPageIds !== undefined, (qb) =>
-          qb.where(sql<boolean>`pages.id = ANY(${scopedPageIds}::uuid[])`),
-        )
-        .where(
-          this.pagePermissionRepo.getAccessiblePagePredicate(
-            opts.userId,
-            'pages.id',
-          ),
-        )
-        .where('pages.deletedAt', 'is', null)
-        .where(
-          'chunks.embeddingModel',
-          '=',
-          this.environmentService.getEmbeddingModel(),
-        )
-        .where('chunks.deletedAt', 'is', null)
-        .orderBy(distance, 'asc')
-        .limit(candidateLimit)
-        .execute();
-
-      const byPageId = new Map<string, (typeof rows)[number]>();
-      for (const row of rows) {
-        if (!byPageId.has(row.id)) {
-          byPageId.set(row.id, row);
-        }
-      }
-      dedupedRows = [...byPageId.values()].sort(
-        (left, right) => Number(right.rank) - Number(left.rank),
+    return this.withHnswIterativeScan(async (trx) => {
+      const targetCount = limit + offset;
+      const maxCandidates = Math.max(
+        targetCount,
+        this.getVectorAnnMaxCandidates(),
       );
+      let candidateLimit = this.getVectorAnnCandidateLimit(targetCount);
+      let dedupedRows: Parameters<typeof mapRows>[0] = [];
 
-      if (
-        dedupedRows.length >= targetCount ||
-        rows.length < candidateLimit ||
-        candidateLimit >= maxCandidates
-      ) {
-        break;
+      while (true) {
+        const rows = await trx
+          .selectFrom('docmostMcpChunks as chunks')
+          .innerJoin('pages', (join) =>
+            join
+              .onRef('pages.id', '=', 'chunks.pageId')
+              .onRef('pages.workspaceId', '=', 'chunks.workspaceId'),
+          )
+          .select([
+            'pages.id',
+            'pages.slugId',
+            'pages.title',
+            'pages.icon',
+            'pages.parentPageId',
+            'pages.creatorId',
+            'pages.createdAt',
+            'pages.updatedAt',
+            'chunks.content as highlight',
+            sql<number>`1 - (${distance})`.as('rank'),
+            searchBreadcrumbsSelection(),
+          ])
+          .select((eb) => this.pageRepo.withSpace(eb))
+          .where('chunks.workspaceId', '=', opts.workspaceId)
+          .where('pages.workspaceId', '=', opts.workspaceId)
+          .where('pages.spaceId', 'in', spaceIds)
+          .$if(Boolean(searchParams.creatorId), (qb) =>
+            qb.where('pages.creatorId', '=', searchParams.creatorId),
+          )
+          .$if(scopedPageIds !== undefined, (qb) =>
+            qb.where(sql<boolean>`pages.id = ANY(${scopedPageIds}::uuid[])`),
+          )
+          .where(
+            this.pagePermissionRepo.getAccessiblePagePredicate(
+              opts.userId,
+              'pages.id',
+            ),
+          )
+          .where('pages.deletedAt', 'is', null)
+          .where(
+            'chunks.embeddingModel',
+            '=',
+            this.environmentService.getEmbeddingModel(),
+          )
+          .where('chunks.deletedAt', 'is', null)
+          .orderBy(distance, 'asc')
+          .limit(candidateLimit)
+          .execute();
+
+        const byPageId = new Map<string, (typeof rows)[number]>();
+        for (const row of rows) {
+          if (!byPageId.has(row.id)) {
+            byPageId.set(row.id, row);
+          }
+        }
+        dedupedRows = [...byPageId.values()].sort(
+          (left, right) => Number(right.rank) - Number(left.rank),
+        );
+
+        if (
+          dedupedRows.length >= targetCount ||
+          rows.length < candidateLimit ||
+          candidateLimit >= maxCandidates
+        ) {
+          break;
+        }
+        candidateLimit = Math.min(maxCandidates, candidateLimit * 2);
       }
-      candidateLimit = Math.min(maxCandidates, candidateLimit * 2);
-    }
 
-    return mapRows(dedupedRows.slice(offset, offset + limit));
+      return mapRows(dedupedRows.slice(offset, offset + limit));
+    });
+  }
+
+  private async withHnswIterativeScan<T>(
+    callback: (trx: KyselyTransaction) => Promise<T>,
+  ): Promise<T> {
+    return this.db.transaction().execute(async (trx) => {
+      // Filtered HNSW scans otherwise stop after the default ef_search window.
+      await sql`SET LOCAL hnsw.iterative_scan = strict_order`.execute(trx);
+      return callback(trx);
+    });
   }
 
   private async resolveScopedPageIds(

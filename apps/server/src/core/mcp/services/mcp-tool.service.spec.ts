@@ -59,8 +59,8 @@ describe('McpToolService', () => {
       actorAccessService?: unknown;
       pageTreeScopeService?: unknown;
     } = {},
-  ) =>
-    new McpToolService(
+  ) => {
+    const service = new McpToolService(
       (overrides.db ?? null) as never,
       (overrides.auditService ?? {
         tryLog: jest.fn().mockResolvedValue(true),
@@ -80,6 +80,13 @@ describe('McpToolService', () => {
       (overrides.actorAccessService ?? null) as never,
       (overrides.pageTreeScopeService ?? null) as never,
     );
+    jest
+      .spyOn(service as never, 'withHnswIterativeScan' as never)
+      .mockImplementation((async (
+        callback: (trx: unknown) => Promise<unknown>,
+      ) => callback(overrides.db)) as never);
+    return service;
+  };
 
   const createPageReadHarness = () => {
     const pageQuery = {
