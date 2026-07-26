@@ -24,7 +24,7 @@ export function SearchControl({ className, ...others }: SearchControlProps) {
     <UnstyledButton {...others} className={cx(classes.root, className)}>
       <Group gap="xs" wrap="nowrap">
         <IconSearch style={{ width: rem(15), height: rem(15) }} stroke={1.5} />
-        <Text fz="sm" c="dimmed" pr={80}>
+        <Text fz="sm" c="dimmed" pr={80} style={{ whiteSpace: "nowrap" }}>
           {t("Search")}
         </Text>
         <Text fw={700} className={classes.shortcut}>
