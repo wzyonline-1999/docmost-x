@@ -9,6 +9,7 @@ import { CollaborationModule } from '../../collaboration/collaboration.module';
 import { WatcherModule } from '../watcher/watcher.module';
 import { TransclusionModule } from './transclusion/transclusion.module';
 import { LabelModule } from '../label/label.module';
+import { PageTreeScopeService } from './services/page-tree-scope.service';
 
 @Module({
   controllers: [PageController],
@@ -17,8 +18,9 @@ import { LabelModule } from '../label/label.module';
     PageHistoryService,
     TrashCleanupService,
     BacklinkService,
+    PageTreeScopeService,
   ],
-  exports: [PageService, PageHistoryService],
+  exports: [PageService, PageHistoryService, PageTreeScopeService],
   imports: [
     StorageModule,
     CollaborationModule,

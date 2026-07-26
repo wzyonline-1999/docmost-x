@@ -1470,5 +1470,21 @@
   "Copy MCP token": "复制 MCP 令牌",
   "I stored this token in a secure password manager.": "我已将此令牌保存到安全的密码管理器中。",
   "Permission conflict": "权限修改冲突",
-  "These permissions changed in another session. The latest values have been reloaded; review them and try again.": "这些权限已在其他会话中被修改。系统已重新加载最新值，请确认后再试。"
+  "These permissions changed in another session. The latest values have been reloaded; review them and try again.": "这些权限已在其他会话中被修改。系统已重新加载最新值，请确认后再试。",
+  "Directory": "目录",
+  "Entire knowledge base": "整个知识库",
+  "Current directory": "当前目录",
+  "Choose directory": "选择目录",
+  "No pages found": "未找到页面",
+  "Current space": "当前知识库",
+  "Hybrid": "混合",
+  "Keyword": "关键词",
+  "Search mode": "搜索模式",
+  "Searching...": "正在搜索...",
+  "Recently opened": "最近打开",
+  "Unavailable": "暂不可用",
+  "AI search failed. Please try again.": "AI 搜索失败，请重试。",
+  "Semantic search is temporarily unavailable. Showing keyword results.": "智能搜索暂时不可用，正在显示关键词搜索结果。",
+  "Search is temporarily unavailable. Please try again.": "搜索暂时不可用，请重试。",
+  "Loading recent pages...": "正在加载最近页面..."
 }

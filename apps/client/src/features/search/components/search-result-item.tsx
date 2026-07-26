@@ -3,7 +3,6 @@ import {
   Group,
   Center,
   Text,
-  Badge,
   ActionIcon,
   Tooltip,
   getDefaultZIndex,
@@ -11,7 +10,7 @@ import {
 import { Spotlight } from "@mantine/spotlight";
 import { Link } from "react-router-dom";
 import { IconFile, IconDownload } from "@tabler/icons-react";
-import { buildPageUrl } from "@/features/page/page.utils";
+import { buildPageUrl, getPageTitle } from "@/features/page/page.utils";
 import { getPageIcon } from "@/lib";
 import {
   IAttachmentSearch,
@@ -19,19 +18,29 @@ import {
 } from "@/features/search/types/search.types";
 import DOMPurify from "dompurify";
 import { useTranslation } from "react-i18next";
+import { buildPageSearchPath } from "@/features/search/utils/search-result-utils";
+import classes from "./search-spotlight.module.css";
 
 interface SearchResultItemProps {
   result: IPageSearch | IAttachmentSearch;
   isAttachmentResult: boolean;
   showSpace?: boolean;
+  animationIndex?: number;
+  isRefreshing?: boolean;
 }
 
 export function SearchResultItem({
   result,
   isAttachmentResult,
   showSpace,
+  animationIndex = 0,
+  isRefreshing = false,
 }: SearchResultItemProps) {
   const { t } = useTranslation();
+  const motionStyle = {
+    userSelect: "none",
+    "--search-result-index": Math.min(animationIndex, 8),
+  } as React.CSSProperties;
 
   if (isAttachmentResult) {
     const attachmentResult = result as IAttachmentSearch;
@@ -52,23 +61,28 @@ export function SearchResultItem({
           attachmentResult.page.slugId,
           attachmentResult.page.title,
         )}
-        style={{ userSelect: "none" }}
+        className={classes.resultItem}
+        data-refreshing={isRefreshing || undefined}
+        style={motionStyle}
       >
         <Group wrap="nowrap" w="100%">
           <Center>
             <IconFile size={16} />
           </Center>
 
-          <div style={{ flex: 1 }}>
-            <Text>{attachmentResult.fileName}</Text>
-            <Text size="xs" opacity={0.6}>
+          <div className={classes.resultContent}>
+            <Text className={classes.resultTitle} lineClamp={1}>
+              {attachmentResult.fileName}
+            </Text>
+            <Text size="xs" c="dimmed" className={classes.resultPath}>
               {attachmentResult.space.name} • {attachmentResult.page.title}
             </Text>
 
             {attachmentResult?.highlight && (
               <Text
-                opacity={0.6}
+                c="dimmed"
                 size="xs"
+                className={classes.resultSnippet}
                 dangerouslySetInnerHTML={{
                   __html: DOMPurify.sanitize(attachmentResult.highlight, {
                     ALLOWED_TAGS: ["mark", "em", "strong", "b"],
@@ -93,6 +107,12 @@ export function SearchResultItem({
     );
   } else {
     const pageResult = result as IPageSearch;
+    const path = buildPageSearchPath(
+      pageResult,
+      Boolean(showSpace),
+      (title, isBase) => getPageTitle(title, isBase, t),
+    );
+
     return (
       <Spotlight.Action
         component={Link}
@@ -102,24 +122,29 @@ export function SearchResultItem({
           pageResult.slugId,
           pageResult.title,
         )}
-        style={{ userSelect: "none" }}
+        className={classes.resultItem}
+        data-refreshing={isRefreshing || undefined}
+        style={motionStyle}
       >
         <Group wrap="nowrap" w="100%">
           <Center>{getPageIcon(pageResult?.icon)}</Center>
 
-          <div style={{ flex: 1 }}>
-            <Text>{pageResult.title}</Text>
+          <div className={classes.resultContent}>
+            <Text className={classes.resultTitle} lineClamp={1}>
+              {getPageTitle(pageResult.title, false, t)}
+            </Text>
 
-            {showSpace && pageResult.space && (
-              <Badge variant="light" size="xs" color="gray">
-                {pageResult.space.name}
-              </Badge>
+            {path.length > 0 && (
+              <Text size="xs" c="dimmed" className={classes.resultPath}>
+                {path.join(" / ")}
+              </Text>
             )}
 
             {pageResult?.highlight && (
               <Text
-                opacity={0.6}
+                c="dimmed"
                 size="xs"
+                className={classes.resultSnippet}
                 dangerouslySetInnerHTML={{
                   __html: DOMPurify.sanitize(pageResult.highlight, {
                     ALLOWED_TAGS: ["mark", "em", "strong", "b"],

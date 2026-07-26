@@ -1470,5 +1470,21 @@
   "Copy MCP token": "Copy MCP token",
   "I stored this token in a secure password manager.": "I stored this token in a secure password manager.",
   "Permission conflict": "Permission conflict",
-  "These permissions changed in another session. The latest values have been reloaded; review them and try again.": "These permissions changed in another session. The latest values have been reloaded; review them and try again."
+  "These permissions changed in another session. The latest values have been reloaded; review them and try again.": "These permissions changed in another session. The latest values have been reloaded; review them and try again.",
+  "Directory": "Directory",
+  "Entire knowledge base": "Entire knowledge base",
+  "Current directory": "Current directory",
+  "Choose directory": "Choose directory",
+  "No pages found": "No pages found",
+  "Current space": "Current space",
+  "Hybrid": "Hybrid",
+  "Keyword": "Keyword",
+  "Search mode": "Search mode",
+  "Searching...": "Searching...",
+  "Recently opened": "Recently opened",
+  "Unavailable": "Unavailable",
+  "AI search failed. Please try again.": "AI search failed. Please try again.",
+  "Semantic search is temporarily unavailable. Showing keyword results.": "Semantic search is temporarily unavailable. Showing keyword results.",
+  "Search is temporarily unavailable. Please try again.": "Search is temporarily unavailable. Please try again.",
+  "Loading recent pages...": "Loading recent pages..."
 }

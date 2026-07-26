@@ -1,0 +1,128 @@
+.resultItem {
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.resultItem[data-refreshing] {
+  opacity: 0.58;
+}
+
+.resultContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.resultTitle {
+  font-weight: 550;
+}
+
+.resultPath {
+  overflow: hidden;
+  margin-top: 1px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resultSnippet {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 3px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.recentSection {
+  padding: 4px 8px 8px;
+}
+
+.sectionLabel {
+  padding: 6px 10px 8px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.emptyState {
+  display: flex;
+  min-height: 120px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--mantine-color-dimmed);
+}
+
+.loadingRows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+}
+
+.loadingRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 10px;
+}
+
+.loadingText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.searchFallback {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 18px 7px;
+  color: light-dark(
+    var(--mantine-color-yellow-8),
+    var(--mantine-color-yellow-4)
+  );
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .resultItem {
+    animation: search-result-enter var(--motion-duration-normal)
+      var(--motion-ease-emphasized) both;
+    animation-delay: calc(var(--search-result-index, 0) * 18ms);
+  }
+
+  .loadingRow {
+    animation: search-loading-enter var(--motion-duration-normal)
+      var(--motion-ease-standard) both;
+  }
+
+  .loadingRow:nth-child(2) {
+    animation-delay: 28ms;
+  }
+
+  .loadingRow:nth-child(3) {
+    animation-delay: 56ms;
+  }
+}
+
+@keyframes search-result-enter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes search-loading-enter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}

@@ -21,6 +21,7 @@ import {
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { ContentFormat } from '../../page/dto/create-page.dto';
 import { PageService } from '../../page/services/page.service';
+import { PageTreeScopeService } from '../../page/services/page-tree-scope.service';
 import { McpAuditService } from './mcp-audit.service';
 import { McpEmbeddingService } from './mcp-embedding.service';
 import {
@@ -131,6 +132,7 @@ export class McpToolService {
     private readonly permissionService: McpPermissionService,
     private readonly vectorIndexService: McpVectorIndexService,
     private readonly actorAccessService: McpActorAccessService,
+    private readonly pageTreeScopeService: PageTreeScopeService,
   ) {}
 
   listTools(): McpToolDefinition[] {
@@ -307,6 +309,11 @@ export class McpToolService {
               type: 'array',
               items: { type: 'string' },
             },
+            rootPageId: {
+              type: 'string',
+              description:
+                'Limit search to this readable page and its descendants.',
+            },
             limit: { type: 'number', minimum: 1, maximum: MAX_SEARCH_LIMIT },
             mode: { type: 'string', enum: ['hybrid', 'keyword', 'semantic'] },
           },
@@ -325,6 +332,11 @@ export class McpToolService {
             spaceIds: {
               type: 'array',
               items: { type: 'string' },
+            },
+            rootPageId: {
+              type: 'string',
+              description:
+                'Limit search to this readable page and its descendants.',
             },
             limit: { type: 'number', minimum: 1, maximum: MAX_SEARCH_LIMIT },
           },
@@ -960,14 +972,30 @@ export class McpToolService {
       return { items: [], warnings: ['No spaces allowed for keyword search'] };
     }
 
+    const scopedPageIds = await this.resolveSearchRootPageIds(
+      args,
+      context,
+      actor,
+      searchSpaceIds,
+    );
+    const rawKeywordItems =
+      scopedPageIds === undefined
+        ? await this.keywordSearch(
+            context.client.workspaceId,
+            searchSpaceIds,
+            query,
+            limit,
+          )
+        : await this.keywordSearch(
+            context.client.workspaceId,
+            searchSpaceIds,
+            query,
+            limit,
+            scopedPageIds,
+          );
     const keywordItems = await this.filterSearchItemsForActor(
       actor,
-      await this.keywordSearch(
-        context.client.workspaceId,
-        searchSpaceIds,
-        query,
-        limit,
-      ),
+      rawKeywordItems,
     );
     const warnings: string[] = [];
 
@@ -1879,8 +1907,9 @@ export class McpToolService {
     spaceIds: string[],
     query: string,
     limit: number,
+    scopedPageIds?: string[],
   ): Promise<SearchItem[]> {
-    const rows = await this.db
+    let keywordQuery = this.db
       .selectFrom('pages')
       .select([
         'id',
@@ -1896,7 +1925,13 @@ export class McpToolService {
       ])
       .where('workspaceId', '=', workspaceId)
       .where('spaceId', 'in', spaceIds)
-      .where('deletedAt', 'is', null)
+      .where('deletedAt', 'is', null);
+
+    if (scopedPageIds !== undefined) {
+      keywordQuery = keywordQuery.where('id', 'in', scopedPageIds);
+    }
+
+    const rows = await keywordQuery
       .where(
         'tsv',
         '@@',
@@ -1951,6 +1986,16 @@ export class McpToolService {
       return [];
     }
 
+    const scopedPageIds = await this.resolveSearchRootPageIds(
+      args,
+      context,
+      resolvedActor,
+      spaceIds,
+    );
+    if (scopedPageIds?.length === 0) {
+      return [];
+    }
+
     if (!this.environmentService.isVectorSearchEnabled()) {
       throw new BadGatewayException('Vector search is disabled');
     }
@@ -1958,7 +2003,7 @@ export class McpToolService {
     const [embedding] = await this.embeddingService.createEmbeddings([query]);
     const vector = formatPgVector(embedding);
     const distance = sql<number>`chunks.embedding <=> ${vector}::vector`;
-    const bestChunks = this.db
+    let bestChunksQuery = this.db
       .selectFrom('docmostMcpChunks as chunks')
       .innerJoin('pages', (join) =>
         join
@@ -1978,7 +2023,13 @@ export class McpToolService {
       .distinctOn('chunks.pageId')
       .where('chunks.workspaceId', '=', context.client.workspaceId)
       .where('pages.workspaceId', '=', context.client.workspaceId)
-      .where('pages.spaceId', 'in', spaceIds)
+      .where('pages.spaceId', 'in', spaceIds);
+
+    if (scopedPageIds !== undefined) {
+      bestChunksQuery = bestChunksQuery.where('pages.id', 'in', scopedPageIds);
+    }
+
+    const bestChunks = bestChunksQuery
       .where('pages.deletedAt', 'is', null)
       .where(
         'chunks.embeddingModel',
@@ -2015,6 +2066,26 @@ export class McpToolService {
         })),
       ),
     );
+  }
+
+  private async resolveSearchRootPageIds(
+    args: JsonObject,
+    context: McpToolContext,
+    actor: User,
+    allowedSpaceIds: string[],
+  ): Promise<string[] | undefined> {
+    const rootPageId = this.optionalString(args, 'rootPageId');
+    if (!rootPageId) {
+      return undefined;
+    }
+
+    const scope = await this.pageTreeScopeService.resolveReadableSubtree({
+      rootPageId,
+      workspaceId: context.client.workspaceId,
+      userId: actor.id,
+      allowedSpaceIds,
+    });
+    return scope.pageIds;
   }
 
   private async filterSearchItemsForActor(

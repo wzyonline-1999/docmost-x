@@ -1,6 +1,15 @@
-import { Injectable } from '@nestjs/common';
-import { SearchDTO, SearchSuggestionDTO } from './dto/search.dto';
-import { SearchResponseDto } from './dto/search-response.dto';
+import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  AdvancedSearchDTO,
+  SearchDTO,
+  SearchMode,
+  SearchSuggestionDTO,
+} from './dto/search.dto';
+import {
+  AdvancedSearchResponseDto,
+  SearchBreadcrumbDto,
+  SearchResponseDto,
+} from './dto/search-response.dto';
 import { InjectKysely } from 'nestjs-kysely';
 import { KyselyDB } from '@docmost/db/types/kysely.types';
 import { sql } from 'kysely';
@@ -8,9 +17,65 @@ import { PageRepo } from '@docmost/db/repos/page/page.repo';
 import { SpaceMemberRepo } from '@docmost/db/repos/space/space-member.repo';
 import { ShareRepo } from '@docmost/db/repos/share/share.repo';
 import { PagePermissionRepo } from '@docmost/db/repos/page/page-permission.repo';
+import { EnvironmentService } from '../../integrations/environment/environment.service';
+import { McpEmbeddingService } from '../mcp/services/mcp-embedding.service';
+import { formatPgVector } from '../mcp/utils/mcp-vector-sql.util';
+import { PageTreeScopeService } from '../page/services/page-tree-scope.service';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const tsquery = require('pg-tsquery')();
+
+type SearchOptions = {
+  userId?: string;
+  workspaceId: string;
+  scopedPageIds?: string[];
+};
+
+function searchBreadcrumbsSelection() {
+  return sql<SearchBreadcrumbDto[]>`
+    COALESCE(
+      (
+        WITH RECURSIVE search_ancestors AS (
+          SELECT
+            parent.id,
+            parent.slug_id,
+            parent.title,
+            parent.is_base,
+            parent.parent_page_id,
+            1 AS depth
+          FROM pages AS parent
+          WHERE parent.id = pages.parent_page_id
+            AND parent.deleted_at IS NULL
+
+          UNION ALL
+
+          SELECT
+            parent.id,
+            parent.slug_id,
+            parent.title,
+            parent.is_base,
+            parent.parent_page_id,
+            search_ancestors.depth + 1
+          FROM pages AS parent
+          INNER JOIN search_ancestors
+            ON search_ancestors.parent_page_id = parent.id
+          WHERE parent.deleted_at IS NULL
+        )
+        SELECT jsonb_agg(
+          jsonb_build_object(
+            'id', id,
+            'slugId', slug_id,
+            'title', title,
+            'isBase', is_base
+          )
+          ORDER BY depth DESC
+        )
+        FROM search_ancestors
+      ),
+      '[]'::jsonb
+    )
+  `.as('breadcrumbs');
+}
 
 @Injectable()
 export class SearchService {
@@ -20,14 +85,14 @@ export class SearchService {
     private shareRepo: ShareRepo,
     private spaceMemberRepo: SpaceMemberRepo,
     private pagePermissionRepo: PagePermissionRepo,
+    private environmentService: EnvironmentService,
+    private embeddingService: McpEmbeddingService,
+    private pageTreeScopeService: PageTreeScopeService,
   ) {}
 
   async searchPage(
     searchParams: SearchDTO,
-    opts: {
-      userId?: string;
-      workspaceId: string;
-    },
+    opts: SearchOptions,
   ): Promise<{ items: SearchResponseDto[] }> {
     const { query } = searchParams;
 
@@ -35,6 +100,13 @@ export class SearchService {
       return { items: [] };
     }
     const searchQuery = tsquery(query.trim() + '*');
+    const scopedPageIds =
+      opts.scopedPageIds ??
+      (await this.resolveScopedPageIds(searchParams, opts));
+
+    if (scopedPageIds?.length === 0) {
+      return { items: [] };
+    }
 
     let queryResults = this.db
       .selectFrom('pages')
@@ -53,6 +125,7 @@ export class SearchService {
         sql<string>`ts_headline('english', text_content, to_tsquery('english', f_unaccent(${searchQuery})),'MinWords=9, MaxWords=10, MaxFragments=3')`.as(
           'highlight',
         ),
+        searchBreadcrumbsSelection(),
       ])
       .where(
         'tsv',
@@ -61,6 +134,9 @@ export class SearchService {
       )
       .$if(Boolean(searchParams.creatorId), (qb) =>
         qb.where('creatorId', '=', searchParams.creatorId),
+      )
+      .$if(scopedPageIds !== undefined, (qb) =>
+        qb.where('id', 'in', scopedPageIds),
       )
       .where('deletedAt', 'is', null)
       .orderBy('rank', 'desc')
@@ -91,20 +167,22 @@ export class SearchService {
         return { items: [] };
       }
 
-      const isRestricted =
-        await this.pagePermissionRepo.hasRestrictedAncestor(share.pageId);
+      const isRestricted = await this.pagePermissionRepo.hasRestrictedAncestor(
+        share.pageId,
+      );
       if (isRestricted) {
         return { items: [] };
       }
 
       const pageIdsToSearch = [];
       if (share.includeSubPages) {
-        const pageList = await this.pageRepo.getPageAndDescendantsExcludingRestricted(
-          share.pageId,
-          {
-            includeContent: false,
-          },
-        );
+        const pageList =
+          await this.pageRepo.getPageAndDescendantsExcludingRestricted(
+            share.pageId,
+            {
+              includeContent: false,
+            },
+          );
 
         pageIdsToSearch.push(...pageList.map((page) => page.id));
       } else {
@@ -126,7 +204,7 @@ export class SearchService {
     let results: any[] = await queryResults.execute();
 
     // Filter results by page-level permissions (if user is authenticated)
-    if (opts.userId && results.length > 0) {
+    if (opts.userId && scopedPageIds === undefined && results.length > 0) {
       const pageIds = results.map((r: any) => r.id);
       const accessibleIds =
         await this.pagePermissionRepo.filterAccessiblePageIds({
@@ -149,6 +227,340 @@ export class SearchService {
     });
 
     return { items: searchResults };
+  }
+
+  async searchAdvanced(
+    searchParams: AdvancedSearchDTO,
+    opts: {
+      userId: string;
+      workspaceId: string;
+    },
+  ): Promise<AdvancedSearchResponseDto> {
+    const mode: SearchMode = searchParams.mode ?? 'hybrid';
+    const semanticAvailable = this.environmentService.isVectorSearchEnabled();
+    const scopedPageIds = await this.resolveScopedPageIds(searchParams, opts);
+    const scopedOptions = { ...opts, scopedPageIds };
+
+    if (mode === 'keyword') {
+      const keyword = await this.searchPage(searchParams, scopedOptions);
+      return {
+        items: keyword.items.map((item) => ({
+          ...item,
+          source: 'keyword',
+        })),
+        mode,
+        semanticAvailable,
+      };
+    }
+
+    if (mode === 'semantic') {
+      if (!semanticAvailable) {
+        throw new ServiceUnavailableException('Semantic search is disabled');
+      }
+
+      return {
+        items: await this.semanticSearchPage(searchParams, scopedOptions),
+        mode,
+        semanticAvailable: true,
+      };
+    }
+
+    const keywordPromise = this.searchPage(searchParams, scopedOptions);
+    if (!semanticAvailable) {
+      const keyword = await keywordPromise;
+      return {
+        items: keyword.items.map((item) => ({
+          ...item,
+          source: 'keyword',
+        })),
+        mode,
+        semanticAvailable: false,
+        fallback: 'keyword',
+      };
+    }
+
+    const [keyword, semanticResult] = await Promise.all([
+      keywordPromise,
+      this.semanticSearchPage(searchParams, scopedOptions)
+        .then((items) => ({ items }))
+        .catch(() => null),
+    ]);
+
+    if (semanticResult) {
+      return {
+        items: this.mergeSearchResults(
+          keyword.items,
+          semanticResult.items,
+          searchParams.limit ?? 25,
+        ),
+        mode,
+        semanticAvailable: true,
+      };
+    }
+
+    return {
+      items: keyword.items.map((item) => ({
+        ...item,
+        source: 'keyword',
+      })),
+      mode,
+      semanticAvailable: false,
+      fallback: 'keyword',
+    };
+  }
+
+  private async semanticSearchPage(
+    searchParams: AdvancedSearchDTO,
+    opts: SearchOptions & { userId: string },
+  ): Promise<SearchResponseDto[]> {
+    const query = searchParams.query.trim();
+    if (!query) return [];
+
+    const scopedPageIds =
+      opts.scopedPageIds ??
+      (await this.resolveScopedPageIds(searchParams, opts));
+    if (scopedPageIds?.length === 0) return [];
+
+    const spaceIds = searchParams.spaceId
+      ? [searchParams.spaceId]
+      : await this.spaceMemberRepo.getUserSpaceIds(opts.userId);
+    if (spaceIds.length === 0) return [];
+
+    const [embedding] = await this.embeddingService.createEmbeddings([query]);
+    const vector = formatPgVector(embedding);
+    const distance = sql<number>`chunks.embedding <=> ${vector}::vector`;
+    const limit = Math.min(Math.max(searchParams.limit ?? 25, 1), 100);
+    const bestChunks = this.db
+      .selectFrom('docmostMcpChunks as chunks')
+      .innerJoin('pages', (join) =>
+        join
+          .onRef('pages.id', '=', 'chunks.pageId')
+          .onRef('pages.workspaceId', '=', 'chunks.workspaceId'),
+      )
+      .select([
+        'chunks.pageId',
+        'chunks.content',
+        sql<number>`1 - (${distance})`.as('score'),
+      ])
+      .distinctOn('chunks.pageId')
+      .where('chunks.workspaceId', '=', opts.workspaceId)
+      .where('pages.workspaceId', '=', opts.workspaceId)
+      .where('pages.spaceId', 'in', spaceIds)
+      .$if(scopedPageIds !== undefined, (qb) =>
+        qb.where('pages.id', 'in', scopedPageIds),
+      )
+      .where('pages.deletedAt', 'is', null)
+      .where(
+        'chunks.embeddingModel',
+        '=',
+        this.environmentService.getEmbeddingModel(),
+      )
+      .where('chunks.deletedAt', 'is', null)
+      .orderBy('chunks.pageId', 'asc')
+      .orderBy(distance, 'asc')
+      .orderBy('chunks.chunkIndex', 'asc')
+      .as('bestChunks');
+
+    const rows = await this.db
+      .selectFrom(bestChunks)
+      .innerJoin('pages', 'pages.id', 'bestChunks.pageId')
+      .select([
+        'pages.id',
+        'pages.slugId',
+        'pages.title',
+        'pages.icon',
+        'pages.parentPageId',
+        'pages.creatorId',
+        'pages.createdAt',
+        'pages.updatedAt',
+        'bestChunks.score as rank',
+        'bestChunks.content as highlight',
+        searchBreadcrumbsSelection(),
+      ])
+      .select((eb) => this.pageRepo.withSpace(eb))
+      .where('pages.workspaceId', '=', opts.workspaceId)
+      .where('pages.spaceId', 'in', spaceIds)
+      .where('pages.deletedAt', 'is', null)
+      .orderBy('bestChunks.score', 'desc')
+      .limit(Math.min(limit * 3, 100))
+      .execute();
+
+    if (rows.length === 0) return [];
+
+    const accessibleSet =
+      scopedPageIds === undefined
+        ? new Set(
+            await this.pagePermissionRepo.filterAccessiblePageIds({
+              pageIds: rows.map((row) => row.id),
+              userId: opts.userId,
+              spaceId: searchParams.spaceId,
+            }),
+          )
+        : new Set(scopedPageIds);
+
+    return rows
+      .filter((row) => accessibleSet.has(row.id))
+      .slice(0, limit)
+      .map((row) => {
+        const semanticScore = Number(row.rank);
+        return {
+          ...row,
+          title: row.title ?? '',
+          icon: row.icon ?? '',
+          highlight: this.normalizeSemanticHighlight(row.highlight),
+          source: 'semantic' as const,
+          scores: {
+            semantic: semanticScore,
+            final: semanticScore,
+          },
+        };
+      });
+  }
+
+  private async resolveScopedPageIds(
+    searchParams: SearchDTO,
+    opts: SearchOptions,
+  ): Promise<string[] | undefined> {
+    if (!searchParams.rootPageId || !opts.userId || searchParams.shareId) {
+      return undefined;
+    }
+
+    const allowedSpaceIds = searchParams.spaceId
+      ? [searchParams.spaceId]
+      : await this.spaceMemberRepo.getUserSpaceIds(opts.userId);
+    const scope = await this.pageTreeScopeService.resolveReadableSubtree({
+      rootPageId: searchParams.rootPageId,
+      workspaceId: opts.workspaceId,
+      userId: opts.userId,
+      allowedSpaceIds,
+    });
+
+    return scope.pageIds;
+  }
+
+  private normalizeSemanticHighlight(content: string | null): string {
+    return (content ?? '')
+      .replace(/\r\n|\r|\n/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 420);
+  }
+
+  private mergeSearchResults(
+    keywordItems: SearchResponseDto[],
+    semanticItems: SearchResponseDto[],
+    requestedLimit: number,
+  ): SearchResponseDto[] {
+    const limit = Math.min(Math.max(requestedLimit, 1), 100);
+    const normalizedKeyword = this.normalizeScores(keywordItems);
+    const normalizedSemantic = this.normalizeScores(semanticItems);
+    const keywordIds = new Set(keywordItems.map((item) => item.id));
+    const semanticIds = new Set(semanticItems.map((item) => item.id));
+    const byPageId = new Map<string, SearchResponseDto>();
+
+    for (const item of keywordItems) {
+      byPageId.set(item.id, { ...item, source: 'keyword' });
+    }
+    for (const item of semanticItems) {
+      const existing = byPageId.get(item.id);
+      if (existing) {
+        existing.source = 'hybrid';
+        existing.scores = {
+          ...existing.scores,
+          semantic: Number(item.rank),
+          final: 0,
+        };
+      } else {
+        byPageId.set(item.id, { ...item, source: 'semantic' });
+      }
+    }
+
+    const weights = this.getHybridWeights();
+    for (const item of byPageId.values()) {
+      const keywordScore = normalizedKeyword.get(item.id) ?? 0;
+      const semanticScore = normalizedSemantic.get(item.id) ?? 0;
+      const recencyScore = this.getRecencyScore(item.updatedAt);
+      const final =
+        keywordScore * weights.keyword +
+        semanticScore * weights.semantic +
+        recencyScore * weights.recency;
+      item.source =
+        keywordIds.has(item.id) && semanticIds.has(item.id)
+          ? 'hybrid'
+          : semanticIds.has(item.id)
+            ? 'semantic'
+            : 'keyword';
+      item.scores = {
+        keyword: keywordScore,
+        semantic: semanticScore,
+        recency: recencyScore,
+        final,
+      };
+      item.rank = final;
+    }
+
+    return [...byPageId.values()]
+      .sort((left, right) => Number(right.rank) - Number(left.rank))
+      .slice(0, limit);
+  }
+
+  private normalizeScores(items: SearchResponseDto[]): Map<string, number> {
+    const finiteScores = items
+      .map((item) => Number(item.rank))
+      .filter(Number.isFinite);
+    if (finiteScores.length === 0) return new Map();
+
+    const minimum = Math.min(...finiteScores);
+    const maximum = Math.max(...finiteScores);
+    return new Map(
+      items.flatMap((item) => {
+        const score = Number(item.rank);
+        if (!Number.isFinite(score)) return [];
+        return [
+          [
+            item.id,
+            maximum === minimum ? 1 : (score - minimum) / (maximum - minimum),
+          ],
+        ];
+      }),
+    );
+  }
+
+  private getHybridWeights(): {
+    keyword: number;
+    semantic: number;
+    recency: number;
+  } {
+    const configured = {
+      keyword: Math.max(
+        0,
+        this.environmentService.getVectorHybridKeywordWeight(),
+      ),
+      semantic: Math.max(
+        0,
+        this.environmentService.getVectorHybridSemanticWeight(),
+      ),
+      recency: Math.max(
+        0,
+        this.environmentService.getVectorHybridRecencyWeight(),
+      ),
+    };
+    const total = configured.keyword + configured.semantic + configured.recency;
+    if (!Number.isFinite(total) || total <= 0) {
+      return { keyword: 0.25, semantic: 0.65, recency: 0.1 };
+    }
+    return {
+      keyword: configured.keyword / total,
+      semantic: configured.semantic / total,
+      recency: configured.recency / total,
+    };
+  }
+
+  private getRecencyScore(updatedAt: Date): number {
+    const timestamp = new Date(updatedAt).getTime();
+    if (!Number.isFinite(timestamp)) return 0;
+    const ageInDays = Math.max(0, Date.now() - timestamp) / 86_400_000;
+    return Math.exp(-ageInDays / 90);
   }
 
   async searchSuggestions(

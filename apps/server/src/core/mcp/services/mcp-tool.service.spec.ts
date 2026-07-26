@@ -57,6 +57,7 @@ describe('McpToolService', () => {
       permissionService?: unknown;
       vectorIndexService?: unknown;
       actorAccessService?: unknown;
+      pageTreeScopeService?: unknown;
     } = {},
   ) =>
     new McpToolService(
@@ -77,6 +78,7 @@ describe('McpToolService', () => {
       (overrides.permissionService ?? null) as never,
       (overrides.vectorIndexService ?? null) as never,
       (overrides.actorAccessService ?? null) as never,
+      (overrides.pageTreeScopeService ?? null) as never,
     );
 
   const createPageReadHarness = () => {
@@ -164,6 +166,14 @@ describe('McpToolService', () => {
       'resume_index_job',
       'cancel_index_job',
     ]);
+    expect(
+      service.listTools().find((tool) => tool.name === 'search_docs')
+        ?.inputSchema.properties,
+    ).toHaveProperty('rootPageId');
+    expect(
+      service.listTools().find((tool) => tool.name === 'semantic_search_docs')
+        ?.inputSchema.properties,
+    ).toHaveProperty('rootPageId');
   });
 
   it('reports only effective permissions when listing spaces', async () => {
@@ -1479,18 +1489,28 @@ describe('McpToolService', () => {
       filterReadableSpaceIds: jest.fn().mockResolvedValue([page.spaceId]),
       filterReadablePageIds: jest.fn().mockResolvedValue(['allowed-page']),
     };
+    const pageTreeScopeService = {
+      resolveReadableSubtree: jest.fn().mockResolvedValue({
+        spaceId: page.spaceId,
+        pageIds: ['allowed-page'],
+      }),
+    };
     const service = createService({
       db,
       environmentService,
       embeddingService,
       permissionService,
       actorAccessService,
+      pageTreeScopeService,
     });
 
     const result = await service.callTool(
       {
         name: 'semantic_search_docs',
-        arguments: { query: 'permission boundary' },
+        arguments: {
+          query: 'permission boundary',
+          rootPageId: page.id,
+        },
       },
       context,
     );
@@ -1521,6 +1541,9 @@ describe('McpToolService', () => {
     expect(semanticQuery.where).toHaveBeenCalledWith('pages.spaceId', 'in', [
       page.spaceId,
     ]);
+    expect(semanticQuery.where).toHaveBeenCalledWith('pages.id', 'in', [
+      'allowed-page',
+    ]);
     expect(semanticQuery.where).toHaveBeenCalledWith(
       'pages.deletedAt',
       'is',
@@ -1530,6 +1553,12 @@ describe('McpToolService', () => {
       actor,
       ['allowed-page', 'denied-page'],
     );
+    expect(pageTreeScopeService.resolveReadableSubtree).toHaveBeenCalledWith({
+      rootPageId: page.id,
+      workspaceId: context.client.workspaceId,
+      userId: actor.id,
+      allowedSpaceIds: [page.spaceId],
+    });
   });
 
   it.each([
@@ -1655,6 +1684,75 @@ describe('McpToolService', () => {
       warnings: [],
     });
     expect(JSON.stringify(result)).not.toContain('Workspace B secret');
+  });
+
+  it('applies the readable directory subtree to MCP keyword search', async () => {
+    const permissionService = {
+      getAllowedSpaceIds: jest.fn().mockResolvedValue([page.spaceId]),
+    };
+    const actorAccessService = {
+      requireActor: jest.fn().mockResolvedValue(actor),
+      filterReadableSpaceIds: jest.fn().mockResolvedValue([page.spaceId]),
+      filterReadablePageIds: jest.fn().mockResolvedValue(['child-page']),
+    };
+    const pageTreeScopeService = {
+      resolveReadableSubtree: jest.fn().mockResolvedValue({
+        spaceId: page.spaceId,
+        pageIds: [page.id, 'child-page'],
+      }),
+    };
+    const environmentService = {
+      getMcpMaxQueryLength: jest.fn(() => 500),
+    };
+    const service = createService({
+      actorAccessService,
+      environmentService,
+      pageTreeScopeService,
+      permissionService,
+    });
+    const keywordSearch = jest
+      .spyOn(
+        service as unknown as {
+          keywordSearch: (...args: unknown[]) => Promise<unknown[]>;
+        },
+        'keywordSearch',
+      )
+      .mockResolvedValue([
+        {
+          pageId: 'child-page',
+          spaceId: page.spaceId,
+          title: 'Child page',
+          snippet: 'Scoped content',
+          updatedAt: new Date(),
+          scores: { keyword: 1, final: 1 },
+          source: 'keyword',
+          contentSource: { type: 'page' },
+        },
+      ]);
+
+    const result = await service.callTool(
+      {
+        name: 'search_docs',
+        arguments: {
+          query: 'scoped content',
+          mode: 'keyword',
+          rootPageId: page.id,
+        },
+      },
+      context,
+    );
+
+    expect(keywordSearch).toHaveBeenCalledWith(
+      context.client.workspaceId,
+      [page.spaceId],
+      'scoped content',
+      10,
+      [page.id, 'child-page'],
+    );
+    expect(result.structuredContent).toMatchObject({
+      items: [{ pageId: 'child-page' }],
+      warnings: [],
+    });
   });
 
   it.each(['semantic_search_docs', 'search_docs'])(

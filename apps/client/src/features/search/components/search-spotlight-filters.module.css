@@ -9,6 +9,7 @@
 .filterButton {
   white-space: nowrap;
   flex-shrink: 0;
+  max-width: 240px;
   font-size: 13px;
   height: 32px;
   padding: 0 12px;
@@ -16,4 +17,15 @@
   &:hover {
     color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-6));
   }
+
+  :global(.mantine-Button-label) {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.searchMode {
+  flex: 0 0 auto;
+  align-self: center;
 }

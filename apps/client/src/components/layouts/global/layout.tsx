@@ -6,10 +6,15 @@ import { isCloud } from "@/lib/config.ts";
 import { SearchSpotlight } from "@/features/search/components/search-spotlight.tsx";
 import React from "react";
 import { useGetSpaceBySlugQuery } from "@/features/space/queries/space-query.ts";
+import { usePageQuery } from "@/features/page/queries/page-query.ts";
+import { extractPageSlugId } from "@/lib";
 
 export default function Layout() {
-  const { spaceSlug } = useParams();
+  const { spaceSlug, pageSlug } = useParams();
   const { data: space } = useGetSpaceBySlugQuery(spaceSlug);
+  const { data: page } = usePageQuery({
+    pageId: extractPageSlugId(pageSlug),
+  });
 
   return (
     <UserProvider>
@@ -17,7 +22,11 @@ export default function Layout() {
         <Outlet />
       </GlobalAppShell>
       {isCloud() && <PosthogUser />}
-      <SearchSpotlight spaceId={space?.id} />
+      <SearchSpotlight
+        key={`${space?.id ?? "workspace"}:${page?.id ?? "index"}`}
+        spaceId={space?.id}
+        currentPage={page}
+      />
     </UserProvider>
   );
 }

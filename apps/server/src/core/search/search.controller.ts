@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { SearchService } from './search.service';
 import {
+  AdvancedSearchDTO,
   SearchDTO,
   SearchShareDTO,
   SearchSuggestionDTO,
@@ -72,6 +73,32 @@ export class SearchController {
   }
 
   @HttpCode(HttpStatus.OK)
+  @Post('advanced')
+  async advancedPageSearch(
+    @Body() searchDto: AdvancedSearchDTO,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    delete searchDto.shareId;
+
+    if (searchDto.spaceId) {
+      const ability = await this.spaceAbility.createForUser(
+        user,
+        searchDto.spaceId,
+      );
+
+      if (ability.cannot(SpaceCaslAction.Read, SpaceCaslSubject.Page)) {
+        throw new ForbiddenException();
+      }
+    }
+
+    return this.searchService.searchAdvanced(searchDto, {
+      userId: user.id,
+      workspaceId: workspace.id,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
   @Post('suggest')
   async searchSuggestions(
     @Body() dto: SearchSuggestionDTO,
@@ -89,6 +116,7 @@ export class SearchController {
     @AuthWorkspace() workspace: Workspace,
   ) {
     delete searchDto.spaceId;
+    delete searchDto.rootPageId;
     if (!searchDto.shareId) {
       throw new BadRequestException('shareId is required');
     }
@@ -111,7 +139,11 @@ export class SearchController {
       workspaceId: string;
     },
   ) {
-    this.logger.debug('Typesense search is not available in the community build');
-    throw new BadRequestException('Typesense search is not available in this build');
+    this.logger.debug(
+      'Typesense search is not available in the community build',
+    );
+    throw new BadRequestException(
+      'Typesense search is not available in this build',
+    );
   }
 }

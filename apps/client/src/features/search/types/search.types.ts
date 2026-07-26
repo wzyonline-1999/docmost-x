@@ -7,14 +7,27 @@ export interface IPageSearch {
   id: string;
   title: string;
   icon: string;
-  parentPageId: string;
+  parentPageId: string | null;
   slugId: string;
   creatorId: string;
   createdAt: Date;
   updatedAt: Date;
-  rank: string;
+  rank: number;
   highlight: string;
+  source?: SearchMode;
+  scores?: {
+    keyword?: number;
+    semantic?: number;
+    recency?: number;
+    final: number;
+  };
   space: Partial<ISpace>;
+  breadcrumbs: Array<{
+    id: string;
+    slugId: string;
+    title: string;
+    isBase: boolean;
+  }>;
 }
 
 export interface SearchSuggestionParams {
@@ -35,7 +48,21 @@ export interface ISuggestionResult {
 export interface IPageSearchParams {
   query: string;
   spaceId?: string;
+  rootPageId?: string;
   shareId?: string;
+}
+
+export type SearchMode = "keyword" | "semantic" | "hybrid";
+
+export interface IAdvancedPageSearchParams extends IPageSearchParams {
+  mode: SearchMode;
+}
+
+export interface IAdvancedPageSearchResponse {
+  items: IPageSearch[];
+  mode: SearchMode;
+  semanticAvailable: boolean;
+  fallback?: "keyword";
 }
 
 export interface IAttachmentSearch {

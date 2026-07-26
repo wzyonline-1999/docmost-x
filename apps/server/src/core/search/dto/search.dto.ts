@@ -2,6 +2,7 @@ import {
   IsBoolean,
   IsNotEmpty,
   IsNumber,
+  IsIn,
   IsOptional,
   IsString,
   IsUUID,
@@ -14,7 +15,11 @@ export class SearchDTO {
 
   @IsOptional()
   @IsUUID()
-  spaceId: string;
+  spaceId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  rootPageId?: string;
 
   @IsOptional()
   @IsString()
@@ -40,7 +45,15 @@ export class SearchShareDTO extends SearchDTO {
 
   @IsOptional()
   @IsUUID()
-  spaceId: string;
+  spaceId?: string;
+}
+
+export type SearchMode = 'keyword' | 'semantic' | 'hybrid';
+
+export class AdvancedSearchDTO extends SearchDTO {
+  @IsOptional()
+  @IsIn(['keyword', 'semantic', 'hybrid'])
+  mode?: SearchMode;
 }
 
 export class SearchSuggestionDTO {

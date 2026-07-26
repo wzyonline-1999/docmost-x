@@ -1,17 +1,29 @@
 import api from "@/lib/api-client";
 import {
   IAttachmentSearch,
+  IAdvancedPageSearchParams,
+  IAdvancedPageSearchResponse,
   IPageSearch,
   IPageSearchParams,
   ISuggestionResult,
   SearchSuggestionParams,
-} from '@/features/search/types/search.types';
+} from "@/features/search/types/search.types";
 
 export async function searchPage(
   params: IPageSearchParams,
 ): Promise<IPageSearch[]> {
   const req = await api.post<{ items: IPageSearch[] }>("/search", params);
   return req.data.items;
+}
+
+export async function searchPagesAdvanced(
+  params: IAdvancedPageSearchParams,
+): Promise<IAdvancedPageSearchResponse> {
+  const req = await api.post<IAdvancedPageSearchResponse>(
+    "/search/advanced",
+    params,
+  );
+  return req.data;
 }
 
 export async function searchSuggestions(
@@ -24,13 +36,19 @@ export async function searchSuggestions(
 export async function searchShare(
   params: IPageSearchParams,
 ): Promise<IPageSearch[]> {
-  const req = await api.post<{ items: IPageSearch[] }>("/search/share-search", params);
+  const req = await api.post<{ items: IPageSearch[] }>(
+    "/search/share-search",
+    params,
+  );
   return req.data.items;
 }
 
 export async function searchAttachments(
   params: IPageSearchParams,
 ): Promise<IAttachmentSearch[]> {
-  const req = await api.post<{ items: IAttachmentSearch[] }>("/search-attachments", params);
+  const req = await api.post<{ items: IAttachmentSearch[] }>(
+    "/search-attachments",
+    params,
+  );
   return req.data.items;
 }
