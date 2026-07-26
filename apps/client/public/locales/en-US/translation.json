@@ -1486,5 +1486,7 @@
   "AI search failed. Please try again.": "AI search failed. Please try again.",
   "Semantic search is temporarily unavailable. Showing keyword results.": "Semantic search is temporarily unavailable. Showing keyword results.",
   "Search is temporarily unavailable. Please try again.": "Search is temporarily unavailable. Please try again.",
-  "Loading recent pages...": "Loading recent pages..."
+  "Loading recent pages...": "Loading recent pages...",
+  "No recently updated pages": "No recently updated pages",
+  "{{count}} results found": "{{count}} results found"
 }

@@ -76,6 +76,13 @@ export class McpActorAccessService {
     });
   }
 
+  getReadablePagePredicate(actor: User, pageIdReference = 'pages.id') {
+    return this.pagePermissionRepo.getAccessiblePagePredicate(
+      actor.id,
+      pageIdReference,
+    );
+  }
+
   private async runMaskedPageCheck(
     check: () => Promise<unknown>,
   ): Promise<void> {

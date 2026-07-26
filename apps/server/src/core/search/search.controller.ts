@@ -115,8 +115,6 @@ export class SearchController {
     @Body() searchDto: SearchShareDTO,
     @AuthWorkspace() workspace: Workspace,
   ) {
-    delete searchDto.spaceId;
-    delete searchDto.rootPageId;
     if (!searchDto.shareId) {
       throw new BadRequestException('shareId is required');
     }

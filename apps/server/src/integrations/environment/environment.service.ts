@@ -422,6 +422,27 @@ export class EnvironmentService {
     );
   }
 
+  getVectorExactPageThreshold(): number {
+    return parseInt(
+      this.configService.get<string>('VECTOR_EXACT_PAGE_THRESHOLD', '400'),
+      10,
+    );
+  }
+
+  getVectorAnnCandidateMultiplier(): number {
+    return parseInt(
+      this.configService.get<string>('VECTOR_ANN_CANDIDATE_MULTIPLIER', '24'),
+      10,
+    );
+  }
+
+  getVectorAnnMaxCandidates(): number {
+    return parseInt(
+      this.configService.get<string>('VECTOR_ANN_MAX_CANDIDATES', '5000'),
+      10,
+    );
+  }
+
   getAiDriver(): string {
     return this.configService.get<string>('AI_DRIVER');
   }

@@ -221,11 +221,16 @@ describe('McpPermissionService', () => {
     ]);
   });
 
-  it('does not add an empty requested-space filter', async () => {
-    await service.getAllowedSpaceIds(client, 'index', []);
+  it('treats an explicitly empty requested-space list as an empty scope', async () => {
+    await expect(
+      service.getAllowedSpaceIds(client, 'index', []),
+    ).resolves.toEqual([]);
 
-    expect(query.where).toHaveBeenCalledWith('canIndex', '=', true);
+    expect(query.where).not.toHaveBeenCalled();
     expect(query.where).not.toHaveBeenCalledWith('spaceId', 'in', []);
+    expect(
+      effectivePermissionService.filterClientSpaceIds,
+    ).not.toHaveBeenCalled();
   });
 
   it('returns effective permission metadata instead of stale configured values', async () => {

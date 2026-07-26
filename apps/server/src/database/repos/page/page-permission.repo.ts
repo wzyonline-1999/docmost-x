@@ -730,6 +730,50 @@ export class PagePermissionRepo {
     return results.map((r) => r.id);
   }
 
+  /**
+   * Build a correlated SQL predicate that enforces inherited page restrictions.
+   * Use this in ranked queries so permission checks happen before LIMIT/OFFSET.
+   */
+  getAccessiblePagePredicate(userId: string, pageIdReference = 'pages.id') {
+    const pageId = sql.ref(pageIdReference);
+
+    return sql<SqlBool>`
+      NOT EXISTS (
+        WITH RECURSIVE permission_ancestors AS (
+          SELECT
+            permission_page.id AS ancestor_id,
+            permission_page.parent_page_id
+          FROM pages AS permission_page
+          WHERE permission_page.id = ${pageId}
+
+          UNION ALL
+
+          SELECT
+            permission_parent.id AS ancestor_id,
+            permission_parent.parent_page_id
+          FROM pages AS permission_parent
+          INNER JOIN permission_ancestors
+            ON permission_ancestors.parent_page_id = permission_parent.id
+        )
+        SELECT 1
+        FROM permission_ancestors
+        INNER JOIN page_access
+          ON page_access.page_id = permission_ancestors.ancestor_id
+        LEFT JOIN page_permissions
+          ON page_permissions.page_access_id = page_access.id
+          AND (
+            page_permissions.user_id = ${userId}
+            OR page_permissions.group_id IN (
+              SELECT group_users.group_id
+              FROM group_users
+              WHERE group_users.user_id = ${userId}
+            )
+          )
+        WHERE page_permissions.id IS NULL
+      )
+    `;
+  }
+
   async filterAccessiblePageIdsWithPermissions(
     pageIds: string[],
     userId: string,

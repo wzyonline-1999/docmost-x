@@ -311,6 +311,8 @@ export class McpToolService {
             },
             rootPageId: {
               type: 'string',
+              format: 'uuid',
+              minLength: 1,
               description:
                 'Limit search to this readable page and its descendants.',
             },
@@ -335,6 +337,8 @@ export class McpToolService {
             },
             rootPageId: {
               type: 'string',
+              format: 'uuid',
+              minLength: 1,
               description:
                 'Limit search to this readable page and its descendants.',
             },
@@ -985,12 +989,14 @@ export class McpToolService {
             searchSpaceIds,
             query,
             limit,
+            actor,
           )
         : await this.keywordSearch(
             context.client.workspaceId,
             searchSpaceIds,
             query,
             limit,
+            actor,
             scopedPageIds,
           );
     const keywordItems = await this.filterSearchItemsForActor(
@@ -1907,6 +1913,7 @@ export class McpToolService {
     spaceIds: string[],
     query: string,
     limit: number,
+    actor: User,
     scopedPageIds?: string[],
   ): Promise<SearchItem[]> {
     let keywordQuery = this.db
@@ -1925,10 +1932,15 @@ export class McpToolService {
       ])
       .where('workspaceId', '=', workspaceId)
       .where('spaceId', 'in', spaceIds)
+      .where(
+        this.actorAccessService.getReadablePagePredicate(actor, 'pages.id'),
+      )
       .where('deletedAt', 'is', null);
 
     if (scopedPageIds !== undefined) {
-      keywordQuery = keywordQuery.where('id', 'in', scopedPageIds);
+      keywordQuery = keywordQuery.where(
+        sql<boolean>`pages.id = ANY(${scopedPageIds}::uuid[])`,
+      );
     }
 
     const rows = await keywordQuery
@@ -2003,53 +2015,17 @@ export class McpToolService {
     const [embedding] = await this.embeddingService.createEmbeddings([query]);
     const vector = formatPgVector(embedding);
     const distance = sql<number>`chunks.embedding <=> ${vector}::vector`;
-    let bestChunksQuery = this.db
-      .selectFrom('docmostMcpChunks as chunks')
-      .innerJoin('pages', (join) =>
-        join
-          .onRef('pages.id', '=', 'chunks.pageId')
-          .onRef('pages.workspaceId', '=', 'chunks.workspaceId'),
-      )
-      .select([
-        'chunks.pageId',
-        'pages.spaceId',
-        'pages.title',
-        'pages.updatedAt',
-        'chunks.content',
-        'chunks.chunkIndex',
-        'chunks.metadata',
-        sql<number>`1 - (${distance})`.as('score'),
-      ])
-      .distinctOn('chunks.pageId')
-      .where('chunks.workspaceId', '=', context.client.workspaceId)
-      .where('pages.workspaceId', '=', context.client.workspaceId)
-      .where('pages.spaceId', 'in', spaceIds);
-
-    if (scopedPageIds !== undefined) {
-      bestChunksQuery = bestChunksQuery.where('pages.id', 'in', scopedPageIds);
-    }
-
-    const bestChunks = bestChunksQuery
-      .where('pages.deletedAt', 'is', null)
-      .where(
-        'chunks.embeddingModel',
-        '=',
-        this.environmentService.getEmbeddingModel(),
-      )
-      .where('chunks.deletedAt', 'is', null)
-      .orderBy('chunks.pageId', 'asc')
-      .orderBy(distance, 'asc')
-      .orderBy('chunks.chunkIndex', 'asc')
-      .as('bestChunks');
-    const rows = await this.db
-      .selectFrom(bestChunks)
-      .selectAll()
-      .orderBy('score', 'desc')
-      .limit(limit)
-      .execute();
-
-    return this.filterSearchItemsForActor(
-      resolvedActor,
+    const mapRows = (
+      rows: Array<{
+        pageId: string;
+        spaceId: string;
+        title: string | null;
+        updatedAt: Date;
+        content: string;
+        metadata: Json;
+        score: number;
+      }>,
+    ) =>
       this.dedupeBestSemanticItems(
         rows.map((row) => ({
           pageId: row.pageId,
@@ -2064,8 +2040,126 @@ export class McpToolService {
           source: 'semantic',
           contentSource: this.toSearchContentSource(row.metadata),
         })),
-      ),
-    );
+      );
+
+    let semanticItems: SearchItem[];
+    if (this.shouldUseExactVectorSearch(scopedPageIds)) {
+      let bestChunksQuery = this.db
+        .selectFrom('docmostMcpChunks as chunks')
+        .innerJoin('pages', (join) =>
+          join
+            .onRef('pages.id', '=', 'chunks.pageId')
+            .onRef('pages.workspaceId', '=', 'chunks.workspaceId'),
+        )
+        .select([
+          'chunks.pageId',
+          'pages.spaceId',
+          'pages.title',
+          'pages.updatedAt',
+          'chunks.content',
+          'chunks.chunkIndex',
+          'chunks.metadata',
+          sql<number>`1 - (${distance})`.as('score'),
+        ])
+        .distinctOn('chunks.pageId')
+        .where('chunks.workspaceId', '=', context.client.workspaceId)
+        .where('pages.workspaceId', '=', context.client.workspaceId)
+        .where('pages.spaceId', 'in', spaceIds)
+        .where(
+          this.actorAccessService.getReadablePagePredicate(
+            resolvedActor,
+            'pages.id',
+          ),
+        );
+
+      if (scopedPageIds !== undefined) {
+        bestChunksQuery = bestChunksQuery.where(
+          sql<boolean>`pages.id = ANY(${scopedPageIds}::uuid[])`,
+        );
+      }
+
+      const bestChunks = bestChunksQuery
+        .where('pages.deletedAt', 'is', null)
+        .where(
+          'chunks.embeddingModel',
+          '=',
+          this.environmentService.getEmbeddingModel(),
+        )
+        .where('chunks.deletedAt', 'is', null)
+        .orderBy('chunks.pageId', 'asc')
+        .orderBy(distance, 'asc')
+        .orderBy('chunks.chunkIndex', 'asc')
+        .as('bestChunks');
+      const rows = await this.db
+        .selectFrom(bestChunks)
+        .selectAll()
+        .orderBy('score', 'desc')
+        .limit(limit)
+        .execute();
+      semanticItems = mapRows(rows);
+    } else {
+      const maxCandidates = this.getVectorAnnMaxCandidates();
+      let candidateLimit = this.getVectorAnnCandidateLimit(limit);
+      semanticItems = [];
+
+      while (true) {
+        let candidateQuery = this.db
+          .selectFrom('docmostMcpChunks as chunks')
+          .innerJoin('pages', (join) =>
+            join
+              .onRef('pages.id', '=', 'chunks.pageId')
+              .onRef('pages.workspaceId', '=', 'chunks.workspaceId'),
+          )
+          .select([
+            'chunks.pageId',
+            'pages.spaceId',
+            'pages.title',
+            'pages.updatedAt',
+            'chunks.content',
+            'chunks.metadata',
+            sql<number>`1 - (${distance})`.as('score'),
+          ])
+          .where('chunks.workspaceId', '=', context.client.workspaceId)
+          .where('pages.workspaceId', '=', context.client.workspaceId)
+          .where('pages.spaceId', 'in', spaceIds)
+          .where(
+            this.actorAccessService.getReadablePagePredicate(
+              resolvedActor,
+              'pages.id',
+            ),
+          );
+
+        if (scopedPageIds !== undefined) {
+          candidateQuery = candidateQuery.where(
+            sql<boolean>`pages.id = ANY(${scopedPageIds}::uuid[])`,
+          );
+        }
+
+        const rows = await candidateQuery
+          .where('pages.deletedAt', 'is', null)
+          .where(
+            'chunks.embeddingModel',
+            '=',
+            this.environmentService.getEmbeddingModel(),
+          )
+          .where('chunks.deletedAt', 'is', null)
+          .orderBy(distance, 'asc')
+          .limit(candidateLimit)
+          .execute();
+        semanticItems = mapRows(rows).slice(0, limit);
+
+        if (
+          semanticItems.length >= limit ||
+          rows.length < candidateLimit ||
+          candidateLimit >= maxCandidates
+        ) {
+          break;
+        }
+        candidateLimit = Math.min(maxCandidates, candidateLimit * 2);
+      }
+    }
+
+    return this.filterSearchItemsForActor(resolvedActor, semanticItems);
   }
 
   private async resolveSearchRootPageIds(
@@ -2074,9 +2168,15 @@ export class McpToolService {
     actor: User,
     allowedSpaceIds: string[],
   ): Promise<string[] | undefined> {
+    if (!Object.prototype.hasOwnProperty.call(args, 'rootPageId')) {
+      return undefined;
+    }
+
     const rootPageId = this.optionalString(args, 'rootPageId');
     if (!rootPageId) {
-      return undefined;
+      throw new BadRequestException(
+        'rootPageId must be a non-empty UUID when provided',
+      );
     }
 
     const scope = await this.pageTreeScopeService.resolveReadableSubtree({
@@ -2086,6 +2186,32 @@ export class McpToolService {
       allowedSpaceIds,
     });
     return scope.pageIds;
+  }
+
+  private shouldUseExactVectorSearch(scopedPageIds?: string[]): boolean {
+    const threshold = Math.max(
+      1,
+      this.environmentService.getVectorExactPageThreshold?.() ?? 400,
+    );
+    return scopedPageIds !== undefined && scopedPageIds.length <= threshold;
+  }
+
+  private getVectorAnnMaxCandidates(): number {
+    return Math.max(
+      100,
+      this.environmentService.getVectorAnnMaxCandidates?.() ?? 5000,
+    );
+  }
+
+  private getVectorAnnCandidateLimit(resultLimit: number): number {
+    const multiplier = Math.max(
+      2,
+      this.environmentService.getVectorAnnCandidateMultiplier?.() ?? 24,
+    );
+    return Math.min(
+      this.getVectorAnnMaxCandidates(),
+      Math.max(200, resultLimit * multiplier),
+    );
   }
 
   private async filterSearchItemsForActor(

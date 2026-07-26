@@ -1,12 +1,15 @@
 import {
   IsBoolean,
+  IsInt,
   IsNotEmpty,
-  IsNumber,
   IsIn,
+  Max,
+  Min,
   IsOptional,
   IsString,
   IsUUID,
 } from 'class-validator';
+import { OmitType } from '@nestjs/mapped-types';
 
 export class SearchDTO {
   @IsNotEmpty()
@@ -30,22 +33,25 @@ export class SearchDTO {
   creatorId?: string;
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
+  @Min(1)
+  @Max(100)
   limit?: number;
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
+  @Min(0)
+  @Max(900)
   offset?: number;
 }
 
-export class SearchShareDTO extends SearchDTO {
+export class SearchShareDTO extends OmitType(SearchDTO, [
+  'rootPageId',
+  'spaceId',
+] as const) {
   @IsNotEmpty()
   @IsString()
   shareId: string;
-
-  @IsOptional()
-  @IsUUID()
-  spaceId?: string;
 }
 
 export type SearchMode = 'keyword' | 'semantic' | 'hybrid';
@@ -77,6 +83,8 @@ export class SearchSuggestionDTO {
   spaceId?: string;
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
+  @Min(1)
+  @Max(100)
   limit?: number;
 }

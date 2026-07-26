@@ -543,6 +543,8 @@ export class PageRepo {
               ])
               .$if(opts?.includeContent, (qb) => qb.select('p.content'))
               .innerJoin('page_hierarchy as ph', 'p.parentPageId', 'ph.id')
+              .whereRef('p.workspaceId', '=', 'ph.workspaceId')
+              .whereRef('p.spaceId', '=', 'ph.spaceId')
               .where('p.deletedAt', 'is', null),
           ),
       )

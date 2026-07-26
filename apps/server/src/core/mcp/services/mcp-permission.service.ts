@@ -89,6 +89,10 @@ export class McpPermissionService {
     action: McpPermissionAction,
     requestedSpaceIds?: string[],
   ): Promise<string[]> {
+    if (requestedSpaceIds !== undefined && requestedSpaceIds.length === 0) {
+      return [];
+    }
+
     const permissionColumn = MCP_PERMISSION_COLUMN[action];
     let query = this.db
       .selectFrom('mcpClientSpacePermissions')
@@ -98,7 +102,7 @@ export class McpPermissionService {
       .where('deletedAt', 'is', null)
       .where(permissionColumn, '=', true);
 
-    if (requestedSpaceIds?.length) {
+    if (requestedSpaceIds !== undefined) {
       query = query.where('spaceId', 'in', requestedSpaceIds);
     }
 

@@ -210,6 +210,18 @@ export class EnvironmentVariables {
   VECTOR_HYBRID_RECENCY_WEIGHT: string;
 
   @IsOptional()
+  @IsNumberString()
+  VECTOR_EXACT_PAGE_THRESHOLD: string;
+
+  @IsOptional()
+  @IsNumberString()
+  VECTOR_ANN_CANDIDATE_MULTIPLIER: string;
+
+  @IsOptional()
+  @IsNumberString()
+  VECTOR_ANN_MAX_CANDIDATES: string;
+
+  @IsOptional()
   @ValidateIf((obj) => obj.AI_DRIVER)
   @IsIn(['openai', 'openai-compatible', 'gemini', 'ollama'])
   @IsString()

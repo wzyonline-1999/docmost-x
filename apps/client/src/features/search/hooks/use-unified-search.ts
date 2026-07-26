@@ -1,8 +1,4 @@
-import {
-  keepPreviousData,
-  useQuery,
-  UseQueryResult,
-} from "@tanstack/react-query";
+import { useQuery, UseQueryResult } from "@tanstack/react-query";
 import {
   searchPagesAdvanced,
   searchAttachments,
@@ -59,6 +55,5 @@ export function useUnifiedSearch(
       }
     },
     enabled: !!params.query && enabled,
-    placeholderData: keepPreviousData,
   });
 }

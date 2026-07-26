@@ -1486,5 +1486,7 @@
   "AI search failed. Please try again.": "AI 搜索失败，请重试。",
   "Semantic search is temporarily unavailable. Showing keyword results.": "智能搜索暂时不可用，正在显示关键词搜索结果。",
   "Search is temporarily unavailable. Please try again.": "搜索暂时不可用，请重试。",
-  "Loading recent pages...": "正在加载最近页面..."
+  "Loading recent pages...": "正在加载最近页面...",
+  "No recently updated pages": "暂无最近更新的页面",
+  "{{count}} results found": "找到 {{count}} 条结果"
 }

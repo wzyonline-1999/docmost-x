@@ -1488,6 +1488,7 @@ describe('McpToolService', () => {
       requireActor: jest.fn().mockResolvedValue(actor),
       filterReadableSpaceIds: jest.fn().mockResolvedValue([page.spaceId]),
       filterReadablePageIds: jest.fn().mockResolvedValue(['allowed-page']),
+      getReadablePagePredicate: jest.fn(() => ({ readable: true })),
     };
     const pageTreeScopeService = {
       resolveReadableSubtree: jest.fn().mockResolvedValue({
@@ -1541,9 +1542,18 @@ describe('McpToolService', () => {
     expect(semanticQuery.where).toHaveBeenCalledWith('pages.spaceId', 'in', [
       page.spaceId,
     ]);
-    expect(semanticQuery.where).toHaveBeenCalledWith('pages.id', 'in', [
-      'allowed-page',
-    ]);
+    expect(actorAccessService.getReadablePagePredicate).toHaveBeenCalledWith(
+      actor,
+      'pages.id',
+    );
+    expect(
+      semanticQuery.where.mock.calls.filter(
+        ([predicate]) =>
+          typeof predicate === 'object' &&
+          predicate !==
+            actorAccessService.getReadablePagePredicate.mock.results[0].value,
+      ),
+    ).toHaveLength(1);
     expect(semanticQuery.where).toHaveBeenCalledWith(
       'pages.deletedAt',
       'is',
@@ -1678,6 +1688,7 @@ describe('McpToolService', () => {
       ['space-allowed'],
       query,
       10,
+      actor,
     );
     expect(result.structuredContent).toMatchObject({
       items: [{ pageId: 'allowed-page', title: 'Allowed result' }],
@@ -1747,12 +1758,139 @@ describe('McpToolService', () => {
       [page.spaceId],
       'scoped content',
       10,
+      actor,
       [page.id, 'child-page'],
     );
     expect(result.structuredContent).toMatchObject({
       items: [{ pageId: 'child-page' }],
       warnings: [],
     });
+  });
+
+  it.each([null, '', '   '])(
+    'rejects an explicitly empty rootPageId value (%p)',
+    async (rootPageId) => {
+      const permissionService = {
+        getAllowedSpaceIds: jest.fn().mockResolvedValue([page.spaceId]),
+      };
+      const actorAccessService = {
+        requireActor: jest.fn().mockResolvedValue(actor),
+        filterReadableSpaceIds: jest.fn().mockResolvedValue([page.spaceId]),
+      };
+      const pageTreeScopeService = {
+        resolveReadableSubtree: jest.fn(),
+      };
+      const service = createService({
+        actorAccessService,
+        environmentService: {
+          getMcpMaxQueryLength: jest.fn(() => 500),
+        },
+        pageTreeScopeService,
+        permissionService,
+      });
+
+      await expect(
+        service.callTool(
+          {
+            name: 'search_docs',
+            arguments: {
+              query: 'must stay scoped',
+              mode: 'keyword',
+              rootPageId,
+            },
+          },
+          context,
+        ),
+      ).rejects.toThrow('rootPageId must be a non-empty UUID');
+      expect(
+        pageTreeScopeService.resolveReadableSubtree,
+      ).not.toHaveBeenCalled();
+    },
+  );
+
+  it('returns no MCP search results for an explicitly empty space scope', async () => {
+    const permissionService = {
+      getAllowedSpaceIds: jest.fn().mockResolvedValue([]),
+    };
+    const actorAccessService = {
+      requireActor: jest.fn().mockResolvedValue(actor),
+      filterReadableSpaceIds: jest.fn().mockResolvedValue([]),
+    };
+    const embeddingService = {
+      createEmbeddings: jest.fn(),
+    };
+    const service = createService({
+      actorAccessService,
+      embeddingService,
+      environmentService: {
+        getMcpMaxQueryLength: jest.fn(() => 500),
+      },
+      permissionService,
+    });
+    const keywordSearch = jest.spyOn(
+      service as unknown as {
+        keywordSearch: (...args: unknown[]) => Promise<unknown[]>;
+      },
+      'keywordSearch',
+    );
+
+    const result = await service.callTool(
+      {
+        name: 'search_docs',
+        arguments: {
+          query: 'must match nothing',
+          mode: 'hybrid',
+          spaceIds: [],
+        },
+      },
+      context,
+    );
+
+    expect(permissionService.getAllowedSpaceIds).toHaveBeenCalledWith(
+      context.client,
+      'search',
+      [],
+    );
+    expect(keywordSearch).not.toHaveBeenCalled();
+    expect(embeddingService.createEmbeddings).not.toHaveBeenCalled();
+    expect(result.structuredContent).toEqual({
+      items: [],
+      warnings: ['No spaces allowed for keyword search'],
+    });
+  });
+
+  it('applies MCP page permissions before keyword result limits', async () => {
+    const query = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      execute: jest.fn().mockResolvedValue([]),
+    };
+    const permissionPredicate = { permission: 'readable' };
+    const actorAccessService = {
+      getReadablePagePredicate: jest.fn(() => permissionPredicate),
+    };
+    const service = createService({
+      actorAccessService,
+      db: { selectFrom: jest.fn(() => query) },
+    });
+
+    await (service as any).keywordSearch(
+      context.client.workspaceId,
+      [page.spaceId],
+      'permission boundary',
+      10,
+      actor,
+    );
+
+    const permissionCallIndex = query.where.mock.calls.findIndex(
+      ([value]) => value === permissionPredicate,
+    );
+    expect(permissionCallIndex).toBeGreaterThanOrEqual(0);
+    expect(
+      query.where.mock.invocationCallOrder[permissionCallIndex],
+    ).toBeLessThan(query.limit.mock.invocationCallOrder[0]);
   });
 
   it.each(['semantic_search_docs', 'search_docs'])(

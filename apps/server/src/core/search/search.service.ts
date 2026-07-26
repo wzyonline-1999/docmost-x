@@ -1,4 +1,8 @@
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import {
   AdvancedSearchDTO,
   SearchDTO,
@@ -79,6 +83,8 @@ function searchBreadcrumbsSelection() {
 
 @Injectable()
 export class SearchService {
+  private readonly logger = new Logger(SearchService.name);
+
   constructor(
     @InjectKysely() private readonly db: KyselyDB,
     private pageRepo: PageRepo,
@@ -136,7 +142,15 @@ export class SearchService {
         qb.where('creatorId', '=', searchParams.creatorId),
       )
       .$if(scopedPageIds !== undefined, (qb) =>
-        qb.where('id', 'in', scopedPageIds),
+        qb.where(sql<boolean>`pages.id = ANY(${scopedPageIds}::uuid[])`),
+      )
+      .$if(Boolean(opts.userId), (qb) =>
+        qb.where(
+          this.pagePermissionRepo.getAccessiblePagePredicate(
+            opts.userId as string,
+            'pages.id',
+          ),
+        ),
       )
       .where('deletedAt', 'is', null)
       .orderBy('rank', 'desc')
@@ -240,6 +254,8 @@ export class SearchService {
     const semanticAvailable = this.environmentService.isVectorSearchEnabled();
     const scopedPageIds = await this.resolveScopedPageIds(searchParams, opts);
     const scopedOptions = { ...opts, scopedPageIds };
+    const requestedLimit = Math.min(Math.max(searchParams.limit ?? 25, 1), 100);
+    const requestedOffset = Math.max(searchParams.offset ?? 0, 0);
 
     if (mode === 'keyword') {
       const keyword = await this.searchPage(searchParams, scopedOptions);
@@ -265,14 +281,21 @@ export class SearchService {
       };
     }
 
-    const keywordPromise = this.searchPage(searchParams, scopedOptions);
+    const hybridParams: AdvancedSearchDTO = {
+      ...searchParams,
+      limit: requestedLimit + requestedOffset,
+      offset: 0,
+    };
+    const keywordPromise = this.searchPage(hybridParams, scopedOptions);
     if (!semanticAvailable) {
       const keyword = await keywordPromise;
       return {
-        items: keyword.items.map((item) => ({
-          ...item,
-          source: 'keyword',
-        })),
+        items: keyword.items
+          .slice(requestedOffset, requestedOffset + requestedLimit)
+          .map((item) => ({
+            ...item,
+            source: 'keyword',
+          })),
         mode,
         semanticAvailable: false,
         fallback: 'keyword',
@@ -281,9 +304,15 @@ export class SearchService {
 
     const [keyword, semanticResult] = await Promise.all([
       keywordPromise,
-      this.semanticSearchPage(searchParams, scopedOptions)
+      this.semanticSearchPage(hybridParams, scopedOptions)
         .then((items) => ({ items }))
-        .catch(() => null),
+        .catch((err) => {
+          this.logger.warn({
+            event: 'search.semantic_fallback',
+            errorType: err instanceof Error ? err.name : typeof err,
+          });
+          return null;
+        }),
     ]);
 
     if (semanticResult) {
@@ -291,18 +320,20 @@ export class SearchService {
         items: this.mergeSearchResults(
           keyword.items,
           semanticResult.items,
-          searchParams.limit ?? 25,
-        ),
+          requestedLimit + requestedOffset,
+        ).slice(requestedOffset, requestedOffset + requestedLimit),
         mode,
         semanticAvailable: true,
       };
     }
 
     return {
-      items: keyword.items.map((item) => ({
-        ...item,
-        source: 'keyword',
-      })),
+      items: keyword.items
+        .slice(requestedOffset, requestedOffset + requestedLimit)
+        .map((item) => ({
+          ...item,
+          source: 'keyword',
+        })),
       mode,
       semanticAvailable: false,
       fallback: 'keyword',
@@ -329,79 +360,25 @@ export class SearchService {
     const [embedding] = await this.embeddingService.createEmbeddings([query]);
     const vector = formatPgVector(embedding);
     const distance = sql<number>`chunks.embedding <=> ${vector}::vector`;
-    const limit = Math.min(Math.max(searchParams.limit ?? 25, 1), 100);
-    const bestChunks = this.db
-      .selectFrom('docmostMcpChunks as chunks')
-      .innerJoin('pages', (join) =>
-        join
-          .onRef('pages.id', '=', 'chunks.pageId')
-          .onRef('pages.workspaceId', '=', 'chunks.workspaceId'),
-      )
-      .select([
-        'chunks.pageId',
-        'chunks.content',
-        sql<number>`1 - (${distance})`.as('score'),
-      ])
-      .distinctOn('chunks.pageId')
-      .where('chunks.workspaceId', '=', opts.workspaceId)
-      .where('pages.workspaceId', '=', opts.workspaceId)
-      .where('pages.spaceId', 'in', spaceIds)
-      .$if(scopedPageIds !== undefined, (qb) =>
-        qb.where('pages.id', 'in', scopedPageIds),
-      )
-      .where('pages.deletedAt', 'is', null)
-      .where(
-        'chunks.embeddingModel',
-        '=',
-        this.environmentService.getEmbeddingModel(),
-      )
-      .where('chunks.deletedAt', 'is', null)
-      .orderBy('chunks.pageId', 'asc')
-      .orderBy(distance, 'asc')
-      .orderBy('chunks.chunkIndex', 'asc')
-      .as('bestChunks');
-
-    const rows = await this.db
-      .selectFrom(bestChunks)
-      .innerJoin('pages', 'pages.id', 'bestChunks.pageId')
-      .select([
-        'pages.id',
-        'pages.slugId',
-        'pages.title',
-        'pages.icon',
-        'pages.parentPageId',
-        'pages.creatorId',
-        'pages.createdAt',
-        'pages.updatedAt',
-        'bestChunks.score as rank',
-        'bestChunks.content as highlight',
-        searchBreadcrumbsSelection(),
-      ])
-      .select((eb) => this.pageRepo.withSpace(eb))
-      .where('pages.workspaceId', '=', opts.workspaceId)
-      .where('pages.spaceId', 'in', spaceIds)
-      .where('pages.deletedAt', 'is', null)
-      .orderBy('bestChunks.score', 'desc')
-      .limit(Math.min(limit * 3, 100))
-      .execute();
-
-    if (rows.length === 0) return [];
-
-    const accessibleSet =
-      scopedPageIds === undefined
-        ? new Set(
-            await this.pagePermissionRepo.filterAccessiblePageIds({
-              pageIds: rows.map((row) => row.id),
-              userId: opts.userId,
-              spaceId: searchParams.spaceId,
-            }),
-          )
-        : new Set(scopedPageIds);
-
-    return rows
-      .filter((row) => accessibleSet.has(row.id))
-      .slice(0, limit)
-      .map((row) => {
+    const limit = Math.min(Math.max(searchParams.limit ?? 25, 1), 1000);
+    const offset = Math.max(searchParams.offset ?? 0, 0);
+    const mapRows = (
+      rows: Array<{
+        id: string;
+        slugId: string;
+        title: string | null;
+        icon: string | null;
+        parentPageId: string | null;
+        creatorId: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+        rank: number;
+        highlight: string | null;
+        breadcrumbs: SearchBreadcrumbDto[];
+        space: SearchResponseDto['space'];
+      }>,
+    ): SearchResponseDto[] =>
+      rows.map((row) => {
         const semanticScore = Number(row.rank);
         return {
           ...row,
@@ -415,6 +392,152 @@ export class SearchService {
           },
         };
       });
+
+    if (this.shouldUseExactVectorSearch(scopedPageIds)) {
+      const bestChunks = this.db
+        .selectFrom('docmostMcpChunks as chunks')
+        .innerJoin('pages', (join) =>
+          join
+            .onRef('pages.id', '=', 'chunks.pageId')
+            .onRef('pages.workspaceId', '=', 'chunks.workspaceId'),
+        )
+        .select([
+          'chunks.pageId',
+          'chunks.content',
+          sql<number>`1 - (${distance})`.as('score'),
+        ])
+        .distinctOn('chunks.pageId')
+        .where('chunks.workspaceId', '=', opts.workspaceId)
+        .where('pages.workspaceId', '=', opts.workspaceId)
+        .where('pages.spaceId', 'in', spaceIds)
+        .$if(Boolean(searchParams.creatorId), (qb) =>
+          qb.where('pages.creatorId', '=', searchParams.creatorId),
+        )
+        .$if(scopedPageIds !== undefined, (qb) =>
+          qb.where(sql<boolean>`pages.id = ANY(${scopedPageIds}::uuid[])`),
+        )
+        .where(
+          this.pagePermissionRepo.getAccessiblePagePredicate(
+            opts.userId,
+            'pages.id',
+          ),
+        )
+        .where('pages.deletedAt', 'is', null)
+        .where(
+          'chunks.embeddingModel',
+          '=',
+          this.environmentService.getEmbeddingModel(),
+        )
+        .where('chunks.deletedAt', 'is', null)
+        .orderBy('chunks.pageId', 'asc')
+        .orderBy(distance, 'asc')
+        .orderBy('chunks.chunkIndex', 'asc')
+        .as('bestChunks');
+
+      const rows = await this.db
+        .selectFrom(bestChunks)
+        .innerJoin('pages', 'pages.id', 'bestChunks.pageId')
+        .select([
+          'pages.id',
+          'pages.slugId',
+          'pages.title',
+          'pages.icon',
+          'pages.parentPageId',
+          'pages.creatorId',
+          'pages.createdAt',
+          'pages.updatedAt',
+          'bestChunks.score as rank',
+          'bestChunks.content as highlight',
+          searchBreadcrumbsSelection(),
+        ])
+        .select((eb) => this.pageRepo.withSpace(eb))
+        .where('pages.workspaceId', '=', opts.workspaceId)
+        .where('pages.spaceId', 'in', spaceIds)
+        .where('pages.deletedAt', 'is', null)
+        .orderBy('bestChunks.score', 'desc')
+        .limit(limit)
+        .offset(offset)
+        .execute();
+      return mapRows(rows);
+    }
+
+    const targetCount = limit + offset;
+    const maxCandidates = Math.max(
+      targetCount,
+      this.getVectorAnnMaxCandidates(),
+    );
+    let candidateLimit = this.getVectorAnnCandidateLimit(targetCount);
+    let dedupedRows: Parameters<typeof mapRows>[0] = [];
+
+    while (true) {
+      const rows = await this.db
+        .selectFrom('docmostMcpChunks as chunks')
+        .innerJoin('pages', (join) =>
+          join
+            .onRef('pages.id', '=', 'chunks.pageId')
+            .onRef('pages.workspaceId', '=', 'chunks.workspaceId'),
+        )
+        .select([
+          'pages.id',
+          'pages.slugId',
+          'pages.title',
+          'pages.icon',
+          'pages.parentPageId',
+          'pages.creatorId',
+          'pages.createdAt',
+          'pages.updatedAt',
+          'chunks.content as highlight',
+          sql<number>`1 - (${distance})`.as('rank'),
+          searchBreadcrumbsSelection(),
+        ])
+        .select((eb) => this.pageRepo.withSpace(eb))
+        .where('chunks.workspaceId', '=', opts.workspaceId)
+        .where('pages.workspaceId', '=', opts.workspaceId)
+        .where('pages.spaceId', 'in', spaceIds)
+        .$if(Boolean(searchParams.creatorId), (qb) =>
+          qb.where('pages.creatorId', '=', searchParams.creatorId),
+        )
+        .$if(scopedPageIds !== undefined, (qb) =>
+          qb.where(sql<boolean>`pages.id = ANY(${scopedPageIds}::uuid[])`),
+        )
+        .where(
+          this.pagePermissionRepo.getAccessiblePagePredicate(
+            opts.userId,
+            'pages.id',
+          ),
+        )
+        .where('pages.deletedAt', 'is', null)
+        .where(
+          'chunks.embeddingModel',
+          '=',
+          this.environmentService.getEmbeddingModel(),
+        )
+        .where('chunks.deletedAt', 'is', null)
+        .orderBy(distance, 'asc')
+        .limit(candidateLimit)
+        .execute();
+
+      const byPageId = new Map<string, (typeof rows)[number]>();
+      for (const row of rows) {
+        if (!byPageId.has(row.id)) {
+          byPageId.set(row.id, row);
+        }
+      }
+      dedupedRows = [...byPageId.values()].sort(
+        (left, right) => Number(right.rank) - Number(left.rank),
+      );
+
+      if (
+        dedupedRows.length >= targetCount ||
+        rows.length < candidateLimit ||
+        candidateLimit >= maxCandidates
+      ) {
+        break;
+      }
+      candidateLimit = Math.min(maxCandidates, candidateLimit * 2);
+    }
+
+    return mapRows(dedupedRows.slice(offset, offset + limit));
   }
 
   private async resolveScopedPageIds(
@@ -438,6 +561,32 @@ export class SearchService {
     return scope.pageIds;
   }
 
+  private shouldUseExactVectorSearch(scopedPageIds?: string[]): boolean {
+    const threshold = Math.max(
+      1,
+      this.environmentService.getVectorExactPageThreshold?.() ?? 400,
+    );
+    return scopedPageIds !== undefined && scopedPageIds.length <= threshold;
+  }
+
+  private getVectorAnnMaxCandidates(): number {
+    return Math.max(
+      100,
+      this.environmentService.getVectorAnnMaxCandidates?.() ?? 5000,
+    );
+  }
+
+  private getVectorAnnCandidateLimit(resultCount: number): number {
+    const multiplier = Math.max(
+      2,
+      this.environmentService.getVectorAnnCandidateMultiplier?.() ?? 24,
+    );
+    return Math.min(
+      Math.max(resultCount, this.getVectorAnnMaxCandidates()),
+      Math.max(200, resultCount * multiplier),
+    );
+  }
+
   private normalizeSemanticHighlight(content: string | null): string {
     return (content ?? '')
       .replace(/\r\n|\r|\n/g, ' ')
@@ -451,7 +600,7 @@ export class SearchService {
     semanticItems: SearchResponseDto[],
     requestedLimit: number,
   ): SearchResponseDto[] {
-    const limit = Math.min(Math.max(requestedLimit, 1), 100);
+    const limit = Math.min(Math.max(requestedLimit, 1), 1000);
     const normalizedKeyword = this.normalizeScores(keywordItems);
     const normalizedSemantic = this.normalizeScores(semanticItems);
     const keywordIds = new Set(keywordItems.map((item) => item.id));
@@ -626,6 +775,12 @@ export class SearchService {
         )
         .where('deletedAt', 'is', null)
         .where('workspaceId', '=', workspaceId)
+        .where(
+          this.pagePermissionRepo.getAccessiblePagePredicate(
+            userId,
+            'pages.id',
+          ),
+        )
         .limit(limit);
 
       // search all spaces the user has access to, prioritizing the current space
