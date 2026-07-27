@@ -70,7 +70,7 @@ export function useCreateMcpClientMutation() {
     mutationFn: (input: IMcpClientInput) => createMcpClient(input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
-      notifications.show({ message: t("MCP client created") });
+      notifications.show({ message: t("Access client created") });
     },
     onError: showMutationError,
   });
@@ -91,7 +91,7 @@ export function useUpdateMcpClientMutation() {
       queryClient.invalidateQueries({
         queryKey: ["mcp-permission-matrix"],
       });
-      notifications.show({ message: t("MCP client updated") });
+      notifications.show({ message: t("Access client updated") });
     },
     onError: showMutationError,
   });
@@ -104,7 +104,7 @@ export function useDisableMcpClientMutation() {
     mutationFn: disableMcpClient,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
-      notifications.show({ message: t("MCP client disabled") });
+      notifications.show({ message: t("Access client disabled") });
     },
     onError: showMutationError,
   });
@@ -117,7 +117,7 @@ export function useDeleteMcpClientMutation() {
     mutationFn: deleteMcpClient,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
-      notifications.show({ message: t("MCP client deleted") });
+      notifications.show({ message: t("Access client deleted") });
     },
     onError: showMutationError,
   });
@@ -130,7 +130,7 @@ export function useRotateMcpClientTokenMutation() {
     mutationFn: rotateMcpClientToken,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
-      notifications.show({ message: t("MCP token rotated") });
+      notifications.show({ message: t("Access token rotated") });
     },
     onError: showMutationError,
   });

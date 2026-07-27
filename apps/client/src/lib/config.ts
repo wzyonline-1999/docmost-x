@@ -25,6 +25,18 @@ export function getBackendUrl(): string {
   return getAppUrl() + "/api";
 }
 
+export function getMcpPublicUrl(): string {
+  const appUrl = getServerAppUrl() || getAppUrl();
+  return trimTrailingSlash(
+    getConfigValue("MCP_PUBLIC_BASE_URL") || `${appUrl}/mcp`,
+  );
+}
+
+export function getDeveloperApiBaseUrl(): string {
+  const appUrl = trimTrailingSlash(getServerAppUrl() || getAppUrl());
+  return `${appUrl}/api/developer/v1`;
+}
+
 export function getCollaborationUrl(): string {
   const baseUrl =
     getConfigValue("COLLAB_URL") ||
@@ -105,4 +117,8 @@ function getConfigValue(key: string, defaultValue: string = undefined): string {
     ? process?.env?.[key]
     : window?.CONFIG?.[key];
   return rawValue ?? defaultValue;
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
 }

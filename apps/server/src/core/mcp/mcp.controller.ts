@@ -24,22 +24,9 @@ import {
 } from './types/mcp-json-rpc.types';
 import { McpToolCallParams } from './types/mcp-tool.types';
 import { McpMetricsService } from './services/mcp-metrics.service';
+import { MCP_MUTATION_TOOLS } from './constants/mcp-tool.constants';
 
 const MCP_PROTOCOL_VERSION = '2025-06-18';
-const MCP_MUTATION_TOOLS = new Set([
-  'create_page',
-  'update_page',
-  'append_page',
-  'delete_page',
-  'restore_page',
-  'reindex_page',
-  'reindex_space',
-  'reindex_workspace',
-  'retry_index_job',
-  'pause_index_job',
-  'resume_index_job',
-  'cancel_index_job',
-]);
 
 @Controller('mcp')
 export class McpController {

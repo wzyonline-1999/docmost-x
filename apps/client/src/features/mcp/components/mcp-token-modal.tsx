@@ -4,6 +4,7 @@ import {
   Button,
   Checkbox,
   Code,
+  Divider,
   Group,
   Modal,
   Stack,
@@ -15,6 +16,7 @@ import { useClipboard } from "@mantine/hooks";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { IMcpClientTokenResponse } from "@/features/mcp/types/mcp.types";
+import { McpConnectionGuide } from "./mcp-connection-guide";
 import classes from "./mcp-settings.module.css";
 
 type McpTokenModalProps = {
@@ -33,16 +35,18 @@ export function McpTokenModal({ response, onClose }: McpTokenModalProps) {
     <Modal
       opened={Boolean(response)}
       onClose={() => undefined}
-      title={t("MCP bearer token")}
+      title={t("Developer access token")}
       centered
+      size="xl"
       closeOnClickOutside={false}
       closeOnEscape={false}
       withCloseButton={false}
+      classNames={{ body: classes.connectionModalBody }}
     >
       <Stack gap="md">
         <Alert color="yellow" icon={<IconKey size={18} />}>
           {t(
-            "This token is shown once. Store it in your password manager before closing this dialog.",
+            "This MCP and API token is shown once. Store it in your password manager before closing this dialog.",
           )}
         </Alert>
         <div>
@@ -61,7 +65,7 @@ export function McpTokenModal({ response, onClose }: McpTokenModalProps) {
             <ActionIcon
               variant="default"
               size="lg"
-              aria-label={t("Copy MCP token")}
+              aria-label={t("Copy access token")}
               disabled={!response?.token}
               onClick={() => clipboard.copy(response?.token ?? "")}
             >
@@ -73,6 +77,12 @@ export function McpTokenModal({ response, onClose }: McpTokenModalProps) {
             </ActionIcon>
           </Tooltip>
         </Group>
+        <Divider />
+        <McpConnectionGuide
+          token={response?.token}
+          clientName={response?.client.name}
+        />
+        <Divider />
         <Checkbox
           checked={confirmed}
           onChange={(event) =>

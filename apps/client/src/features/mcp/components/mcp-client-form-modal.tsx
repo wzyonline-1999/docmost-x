@@ -105,7 +105,10 @@ export function McpClientFormModal({
     ) {
       options.unshift({
         value: selectedActorId,
-        label: `${t("Current actor")} (${selectedActorId.slice(0, 8)})`,
+        label: `${t("Current representative user")} (${selectedActorId.slice(
+          0,
+          8,
+        )})`,
       });
     }
     return options;
@@ -154,7 +157,7 @@ export function McpClientFormModal({
     <Modal
       opened={opened}
       onClose={pending ? () => undefined : closeModal}
-      title={client ? t("Edit MCP client") : t("Create MCP client")}
+      title={client ? t("Edit access client") : t("Create access client")}
       centered
       closeOnClickOutside={!pending}
       closeOnEscape={!pending}
@@ -214,7 +217,7 @@ export function McpClientFormModal({
             </Alert>
           )}
           <Select
-            label={t("Actor user")}
+            label={t("Representative user")}
             description={
               form.values.scope === "personal"
                 ? t("Personal clients always use your Docmost permissions.")

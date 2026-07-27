@@ -80,7 +80,12 @@ vi.mock("@/features/mcp/queries/mcp-query", () => ({
 function renderClientList() {
   return render(
     <MantineProvider>
-      <McpClientList onCreate={vi.fn()} onEdit={vi.fn()} onToken={vi.fn()} />
+      <McpClientList
+        onCreate={vi.fn()}
+        onEdit={vi.fn()}
+        onConfigure={vi.fn()}
+        onToken={vi.fn()}
+      />
     </MantineProvider>,
   );
 }
@@ -142,7 +147,7 @@ describe("McpClientList", () => {
     renderClientList();
 
     fireEvent.change(
-      screen.getByRole("textbox", { name: "Search MCP clients" }),
+      screen.getByRole("textbox", { name: "Search access clients" }),
       {
         target: { value: "codex prod" },
       },

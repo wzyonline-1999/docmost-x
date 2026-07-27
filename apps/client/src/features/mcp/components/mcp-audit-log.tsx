@@ -362,7 +362,10 @@ function AuditDetailModal({
             <AuditField label={t("Tool")} value={log.toolName} />
             <AuditField label={t("Request ID")} value={log.requestId} />
             <AuditField label={t("Client ID")} value={log.clientId} />
-            <AuditField label={t("Actor ID")} value={log.actorUserId} />
+            <AuditField
+              label={t("Representative user ID")}
+              value={log.actorUserId}
+            />
             <AuditField label={t("Space ID")} value={log.spaceId} />
             <AuditField label={t("IP address")} value={log.ipAddress} />
             <AuditField label={t("Resource type")} value={log.resourceType} />

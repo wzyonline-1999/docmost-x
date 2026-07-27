@@ -1,0 +1,17 @@
+export const MCP_MUTATION_TOOLS: ReadonlySet<string> = new Set([
+  'restore_page_version',
+  'upload_attachment',
+  'delete_attachment',
+  'create_page',
+  'update_page',
+  'append_page',
+  'delete_page',
+  'restore_page',
+  'reindex_page',
+  'reindex_space',
+  'reindex_workspace',
+  'retry_index_job',
+  'pause_index_job',
+  'resume_index_job',
+  'cancel_index_job',
+]);

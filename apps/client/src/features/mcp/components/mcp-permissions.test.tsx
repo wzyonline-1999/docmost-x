@@ -401,7 +401,7 @@ describe("McpPermissions", () => {
     expect(screen.getByText("Space One")).toBeTruthy();
     expect(container.querySelector(`.${classes.permissionTable}`)).toBeNull();
     const spaceControl = screen.getByRole("button", {
-      name: /Space One space-one Actor: Admin/,
+      name: /Space One space-one Representative user: Admin/,
     });
     fireEvent.click(spaceControl);
     expect(spaceControl.getAttribute("aria-expanded")).toBe("true");

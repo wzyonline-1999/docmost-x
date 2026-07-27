@@ -18,6 +18,14 @@ const response = {
 
 describe("McpTokenModal", () => {
   beforeAll(() => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       matches: false,
       media: query,

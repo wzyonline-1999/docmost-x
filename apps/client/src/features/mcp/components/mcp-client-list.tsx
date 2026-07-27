@@ -19,6 +19,7 @@ import {
   IconExclamationCircle,
   IconKey,
   IconPlayerPlay,
+  IconPlugConnected,
   IconPlus,
   IconRefresh,
   IconSearch,
@@ -50,12 +51,14 @@ import classes from "./mcp-settings.module.css";
 type McpClientListProps = {
   onCreate: () => void;
   onEdit: (client: IMcpClient) => void;
+  onConfigure: (client: IMcpClient) => void;
   onToken: (response: IMcpClientTokenResponse) => void;
 };
 
 export function McpClientList({
   onCreate,
   onEdit,
+  onConfigure,
   onToken,
 }: McpClientListProps) {
   const { t } = useTranslation();
@@ -85,7 +88,7 @@ export function McpClientList({
 
   const confirmDisable = (client: IMcpClient) => {
     modals.openConfirmModal({
-      title: t("Disable MCP client"),
+      title: t("Disable access client"),
       children: (
         <Text size="sm">
           {t("Existing requests from")} <strong>{client.name}</strong>{" "}
@@ -100,7 +103,7 @@ export function McpClientList({
 
   const confirmRotate = (client: IMcpClient) => {
     modals.openConfirmModal({
-      title: t("Rotate MCP token"),
+      title: t("Rotate access token"),
       children: (
         <Text size="sm">
           {t("The current token for")} <strong>{client.name}</strong>{" "}
@@ -115,7 +118,7 @@ export function McpClientList({
 
   const confirmDelete = (client: IMcpClient) => {
     modals.openConfirmModal({
-      title: t("Delete MCP client"),
+      title: t("Delete access client"),
       children: (
         <Text size="sm">
           {t("Delete")} <strong>{client.name}</strong>{" "}
@@ -133,7 +136,7 @@ export function McpClientList({
       <div className={classes.toolbar}>
         <Group gap="sm" wrap="wrap">
           <TextInput
-            aria-label={t("Search MCP clients")}
+            aria-label={t("Search access clients")}
             placeholder={t("Search clients")}
             leftSection={<IconSearch size={16} />}
             value={query}
@@ -143,7 +146,7 @@ export function McpClientList({
             }}
           />
           <Select
-            aria-label={t("Filter MCP clients by status")}
+            aria-label={t("Filter access clients by status")}
             placeholder={t("All statuses")}
             clearable
             value={status}
@@ -167,7 +170,7 @@ export function McpClientList({
         <Alert
           icon={<IconExclamationCircle size={18} />}
           color="red"
-          title={t("MCP clients could not be loaded")}
+          title={t("Access clients could not be loaded")}
         >
           <Group justify="space-between" align="center">
             <Text size="sm">
@@ -207,7 +210,7 @@ export function McpClientList({
                 <Table.Tr>
                   <Table.Th w="28%">{t("Client")}</Table.Th>
                   <Table.Th w="14%">{t("Status")}</Table.Th>
-                  <Table.Th w="20%">{t("Actor")}</Table.Th>
+                  <Table.Th w="20%">{t("Representative user")}</Table.Th>
                   <Table.Th w="18%">{t("Last used")}</Table.Th>
                   <Table.Th w="14%">{t("Expires")}</Table.Th>
                   <Table.Th w={56}>
@@ -278,6 +281,12 @@ export function McpClientList({
                             </Tooltip>
                           </Menu.Target>
                           <Menu.Dropdown>
+                            <Menu.Item
+                              leftSection={<IconPlugConnected size={16} />}
+                              onClick={() => onConfigure(client)}
+                            >
+                              {t("Connection setup")}
+                            </Menu.Item>
                             {client.capabilities.canEdit && (
                               <Menu.Item
                                 leftSection={<IconEdit size={16} />}

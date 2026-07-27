@@ -79,7 +79,7 @@ function getNativeAccessDisplay(
   if (row?.actorRole) {
     const role = `${row.actorRole[0].toUpperCase()}${row.actorRole.slice(1)}`;
     return {
-      label: `${t("Actor")}: ${t(role)}`,
+      label: `${t("Representative user")}: ${t(role)}`,
       color: row.actorRole === "reader" ? "blue" : "green",
     };
   }
@@ -89,8 +89,8 @@ function getNativeAccessDisplay(
     Exclude<McpNativeAccessReason, "read_only" | null>,
     string
   > = {
-    actor_unmapped: "No actor mapping",
-    actor_unavailable: "Actor unavailable",
+    actor_unmapped: "No representative user",
+    actor_unavailable: "Representative user unavailable",
     no_space_access: "No space access",
   };
 
@@ -108,18 +108,22 @@ function getUnavailablePermissionLabel(
   t: TFunction,
 ) {
   if (row?.reason === "read_only") {
-    return t("The actor's read-only role does not allow this permission");
+    return t(
+      "The representative user's read-only role does not allow this permission",
+    );
   }
   if (row?.reason === "no_space_access") {
-    return t("The actor no longer has access to this space");
+    return t("The representative user no longer has access to this space");
   }
   if (row?.reason === "actor_unmapped") {
-    return t("This client has no actor mapping");
+    return t("This client has no representative user");
   }
   if (row?.reason === "actor_unavailable") {
-    return t("The mapped actor is unavailable");
+    return t("The representative user is unavailable");
   }
-  return t("This permission is outside the actor's current native access");
+  return t(
+    "This permission is outside the representative user's current native access",
+  );
 }
 
 function getClientOptionLabel(
@@ -196,8 +200,8 @@ export function McpPermissions() {
   const clientOptions = selectableClients.map((item) => {
     const actorName = item.actorUserId
       ? (actors.get(item.actorUserId) ??
-        `${t("Actor")} ${item.actorUserId.slice(0, 8)}`)
-      : t("No actor");
+        `${t("Representative user")} ${item.actorUserId.slice(0, 8)}`)
+      : t("No representative user");
     return {
       value: item.id,
       label: getClientOptionLabel(item, actorName, t),
@@ -371,7 +375,7 @@ export function McpPermissions() {
       title: t("Remove space permission"),
       children: (
         <Text size="sm">
-          {t("Remove all MCP access to")} <strong>{spaceName}</strong>{" "}
+          {t("Remove all client access to")} <strong>{spaceName}</strong>{" "}
           {t("for this client")}?
         </Text>
       ),
@@ -595,7 +599,7 @@ export function McpPermissions() {
         <Group align="flex-end" wrap="wrap">
           <TextInput
             label={t("Find a client")}
-            aria-label={t("Search MCP clients")}
+            aria-label={t("Search access clients")}
             placeholder={t("Search by client name")}
             leftSection={<IconSearch size={16} />}
             value={clientSearch}
@@ -639,14 +643,14 @@ export function McpPermissions() {
 
         <Text size="xs" c="dimmed">
           {t(
-            "Effective access is the intersection of these settings and the actor's current native role.",
+            "Effective access is the intersection of these settings and the representative user's current native role.",
           )}
         </Text>
       </Stack>
 
       {clientsQuery.isError && (
         <RetryAlert
-          title={t("MCP clients could not be loaded")}
+          title={t("Access clients could not be loaded")}
           message={t("Check the connection and try loading clients again.")}
           onRetry={() => clientsQuery.refetch()}
         />
@@ -657,11 +661,11 @@ export function McpPermissions() {
         !client &&
         (debouncedClientSearch || clientPagination.cursor ? (
           <Alert icon={<IconInfoCircle size={18} />} color="blue" mb="sm">
-            {t("No MCP clients match this page or search.")}
+            {t("No access clients match this page or search.")}
           </Alert>
         ) : (
           <Alert icon={<IconInfoCircle size={18} />} color="blue" mb="sm">
-            {t("Create an MCP client before assigning space permissions.")}
+            {t("Create an access client before assigning space permissions.")}
           </Alert>
         ))}
 
@@ -697,7 +701,7 @@ export function McpPermissions() {
       {matrixQuery.data && !matrixQuery.data.actorAvailable && (
         <Alert icon={<IconInfoCircle size={18} />} color="red" mb="sm">
           {t(
-            "The mapped actor is missing or unavailable. All configured permissions are currently inactive.",
+            "The representative user is missing or unavailable. All configured permissions are currently inactive.",
           )}
         </Alert>
       )}
@@ -709,7 +713,7 @@ export function McpPermissions() {
             ? t("configured permission is inactive")
             : t("configured permissions are inactive")}{" "}
           {t(
-            "under the actor's current role. Orange checks can be cleared but cannot be enabled again unless native access is restored.",
+            "under the representative user's current role. Orange checks can be cleared but cannot be enabled again unless native access is restored.",
           )}
         </Alert>
       )}

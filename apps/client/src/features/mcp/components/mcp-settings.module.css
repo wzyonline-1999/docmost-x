@@ -33,6 +33,42 @@
   overflow-wrap: anywhere;
 }
 
+.connectionModalBody {
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+}
+
+.connectionMode {
+  max-width: 620px;
+}
+
+.connectionSnippet {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.connectionCode,
+.connectionCodeSingleLine {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--mantine-color-default-border);
+  background: light-dark(
+    var(--mantine-color-gray-0),
+    var(--mantine-color-dark-7)
+  );
+  font-size: var(--mantine-font-size-xs);
+}
+
+.connectionCode {
+  max-height: 260px;
+  white-space: pre;
+}
+
+.connectionCodeSingleLine {
+  white-space: nowrap;
+}
+
 .permissionHeader {
   display: flex;
   align-items: center;
@@ -140,6 +176,14 @@
 @media (max-width: 48em) {
   .filters {
     grid-template-columns: 1fr;
+  }
+
+  .connectionMode {
+    max-width: 100%;
+  }
+
+  .connectionMode :global(.mantine-SegmentedControl-label) {
+    padding-inline: 8px;
   }
 }
 

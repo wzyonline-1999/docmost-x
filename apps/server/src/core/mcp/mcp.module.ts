@@ -23,10 +23,16 @@ import { McpMetricsService } from './services/mcp-metrics.service';
 import { McpPageHistoryService } from './services/mcp-page-history.service';
 import { McpAttachmentService } from './services/mcp-attachment.service';
 import { McpEffectivePermissionService } from './services/mcp-effective-permission.service';
+import { DeveloperApiController } from './developer-api.controller';
 
 @Module({
   imports: [AttachmentModule, PageModule, StorageModule],
-  controllers: [McpController, McpAdminController, McpMetricsController],
+  controllers: [
+    DeveloperApiController,
+    McpController,
+    McpAdminController,
+    McpMetricsController,
+  ],
   providers: [
     McpAdminService,
     McpAttachmentService,

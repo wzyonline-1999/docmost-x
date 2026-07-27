@@ -77,7 +77,7 @@ export async function bulkUpsertMcpPermissions(
   if (
     permissions.some((permission) => permission.clientId !== first.clientId)
   ) {
-    throw new Error("Permission batch must target one MCP client");
+    throw new Error("Permission batch must target one access client");
   }
 
   const response = await api.post<IMcpPermissionBatchResult>(
