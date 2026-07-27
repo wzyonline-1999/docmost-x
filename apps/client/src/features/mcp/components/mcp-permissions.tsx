@@ -626,11 +626,7 @@ export function McpPermissions() {
           />
         </Group>
 
-        <Group justify="space-between" wrap="wrap" gap="xs">
-          <Text size="xs" c="dimmed">
-            {t("This client page shows")} {clients.length} {t("clients")}.{" "}
-            {t("Search or use pagination to find another client.")}
-          </Text>
+        <Group justify="flex-end">
           <Paginate
             hasPrevPage={clientsQuery.data?.meta?.hasPrevPage ?? false}
             hasNextPage={clientsQuery.data?.meta?.hasNextPage ?? false}
@@ -640,12 +636,6 @@ export function McpPermissions() {
             }
           />
         </Group>
-
-        <Text size="xs" c="dimmed">
-          {t(
-            "Effective access is the intersection of these settings and the representative user's current native role.",
-          )}
-        </Text>
       </Stack>
 
       {clientsQuery.isError && (
@@ -798,10 +788,6 @@ export function McpPermissions() {
                   {t("Last change failed")}
                 </Badge>
               )}
-              <Text size="xs" c="dimmed">
-                {t("Bulk actions affect only the")} {spaces.length}{" "}
-                {t("spaces shown on this page")}.
-              </Text>
             </Group>
           </div>
 
@@ -977,10 +963,7 @@ export function McpPermissions() {
             </Table>
           )}
 
-          <Group justify="space-between" align="center" mt="sm" wrap="wrap">
-            <Text size="xs" c="dimmed">
-              {t("This space page shows")} {spaces.length} {t("spaces")}.
-            </Text>
+          <Group justify="flex-end" align="center" mt="sm">
             <Paginate
               hasPrevPage={spacesQuery.data?.meta?.hasPrevPage ?? false}
               hasNextPage={spacesQuery.data?.meta?.hasNextPage ?? false}

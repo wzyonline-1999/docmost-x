@@ -1,5 +1,6 @@
 import { MantineProvider } from "@mantine/core";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpPermissions } from "./mcp-permissions";
 import classes from "./mcp-settings.module.css";
@@ -11,8 +12,9 @@ const mocks = vi.hoisted(() => ({
   deleteMutate: vi.fn(),
   matrixQuery: vi.fn(),
   membersQuery: vi.fn(),
-  openConfirmModal: vi.fn((options: { onConfirm?: () => void }) =>
-    options.onConfirm?.(),
+  openConfirmModal: vi.fn(
+    (options: { children?: ReactNode; onConfirm?: () => void }) =>
+      options.onConfirm?.(),
   ),
   spacesQuery: vi.fn(),
   spaceParams: vi.fn(),
@@ -363,6 +365,28 @@ describe("McpPermissions", () => {
         }),
       ]),
     );
+  });
+
+  it("keeps the matrix concise while preserving batch scope in confirmation", () => {
+    renderPermissions();
+
+    expect(screen.queryByText(/This client page shows/)).toBeNull();
+    expect(
+      screen.queryByText(
+        /Effective access is the intersection of these settings/,
+      ),
+    ).toBeNull();
+    expect(screen.queryByText(/Bulk actions affect only/)).toBeNull();
+    expect(screen.queryByText(/This space page shows/)).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clear page permissions" }),
+    );
+    const [{ children }] = mocks.openConfirmModal.mock.calls[0];
+    render(<MantineProvider>{children}</MantineProvider>);
+
+    expect(screen.getByText(/spaces on this page/)).toBeTruthy();
+    expect(screen.getByText(/affects this page only/)).toBeTruthy();
   });
 
   it("shows disabled client context before the permission matrix", () => {
