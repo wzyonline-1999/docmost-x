@@ -44,8 +44,18 @@ export interface ApiKeys {
 
 export interface Attachments {
   aiChatId: string | null;
+  contentIndexAttemptCount: Generated<number>;
+  contentIndexError: string | null;
+  contentIndexLeaseExpiresAt: Timestamp | null;
+  contentIndexLeaseOwner: string | null;
+  contentIndexStatus: Generated<string>;
+  contentIndexedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
   creatorId: string;
+  deletionAttemptCount: Generated<number>;
+  deletionError: string | null;
+  deletionStartedAt: Timestamp | null;
+  deletionStatus: Generated<string>;
   deletedAt: Timestamp | null;
   fileExt: string;
   fileName: string;
@@ -104,6 +114,7 @@ export interface DocmostMcpIndexJobs {
   id: Generated<string>;
   jobType: string;
   lastError: string | null;
+  parentJobId: string | null;
   pageId: string | null;
   requestedByClientId: string | null;
   requestedByUserId: string | null;
@@ -112,6 +123,17 @@ export interface DocmostMcpIndexJobs {
   stats: Generated<Json>;
   status: Generated<string>;
   updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
+export interface DocmostMcpEligibilityReconciliations {
+  attemptCount: Generated<number>;
+  lastError: string | null;
+  leaseExpiresAt: Timestamp | null;
+  leaseOwner: string | null;
+  reason: string;
+  requestedAt: Generated<Timestamp>;
+  spaceId: string;
   workspaceId: string;
 }
 
@@ -769,6 +791,7 @@ export interface DB {
   billing: Billing;
   comments: Comments;
   docmostMcpChunks: DocmostMcpChunks;
+  docmostMcpEligibilityReconciliations: DocmostMcpEligibilityReconciliations;
   docmostMcpIndexJobs: DocmostMcpIndexJobs;
   favorites: Favorites;
   fileTasks: FileTasks;

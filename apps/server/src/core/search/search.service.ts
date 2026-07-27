@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   ServiceUnavailableException,
@@ -13,6 +14,7 @@ import {
   AdvancedSearchResponseDto,
   SearchBreadcrumbDto,
   SearchResponseDto,
+  SemanticSearchStatus,
 } from './dto/search-response.dto';
 import { InjectKysely } from 'nestjs-kysely';
 import { KyselyDB } from '@docmost/db/types/kysely.types';
@@ -26,6 +28,8 @@ import { McpEmbeddingService } from '../mcp/services/mcp-embedding.service';
 import { formatPgVector } from '../mcp/utils/mcp-vector-sql.util';
 import { PageTreeScopeService } from '../page/services/page-tree-scope.service';
 import { KyselyTransaction } from '@docmost/db/types/kysely.types';
+import { Json } from '@docmost/db/types/db';
+import { SearchRateLimitService } from './search-rate-limit.service';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const tsquery = require('pg-tsquery')();
@@ -96,6 +100,7 @@ export class SearchService {
     private environmentService: EnvironmentService,
     private embeddingService: McpEmbeddingService,
     private pageTreeScopeService: PageTreeScopeService,
+    private searchRateLimitService: SearchRateLimitService,
   ) {}
 
   async searchPage(
@@ -103,6 +108,7 @@ export class SearchService {
     opts: SearchOptions,
   ): Promise<{ items: SearchResponseDto[] }> {
     const { query } = searchParams;
+    this.assertQueryLength(query);
 
     if (query.length < 1) {
       return { items: [] };
@@ -253,8 +259,10 @@ export class SearchService {
       workspaceId: string;
     },
   ): Promise<AdvancedSearchResponseDto> {
+    this.assertQueryLength(searchParams.query);
     const mode: SearchMode = searchParams.mode ?? 'hybrid';
-    const semanticAvailable = this.environmentService.isVectorSearchEnabled();
+    const semanticStatus = await this.getSemanticStatus(opts.workspaceId);
+    const semanticAvailable = semanticStatus === 'ready';
     const scopedPageIds = await this.resolveScopedPageIds(searchParams, opts);
     const scopedOptions = { ...opts, scopedPageIds };
     const requestedLimit = Math.min(Math.max(searchParams.limit ?? 25, 1), 100);
@@ -269,18 +277,26 @@ export class SearchService {
         })),
         mode,
         semanticAvailable,
+        semanticStatus,
       };
     }
 
     if (mode === 'semantic') {
       if (!semanticAvailable) {
-        throw new ServiceUnavailableException('Semantic search is disabled');
+        throw new ServiceUnavailableException(
+          `Semantic search is ${semanticStatus}`,
+        );
       }
 
+      await this.searchRateLimitService.assertSemanticSearchAllowed({
+        workspaceId: opts.workspaceId,
+        userId: opts.userId,
+      });
       return {
         items: await this.semanticSearchPage(searchParams, scopedOptions),
         mode,
         semanticAvailable: true,
+        semanticStatus: 'ready',
       };
     }
 
@@ -289,9 +305,8 @@ export class SearchService {
       limit: requestedLimit + requestedOffset,
       offset: 0,
     };
-    const keywordPromise = this.searchPage(hybridParams, scopedOptions);
     if (!semanticAvailable) {
-      const keyword = await keywordPromise;
+      const keyword = await this.searchPage(hybridParams, scopedOptions);
       return {
         items: keyword.items
           .slice(requestedOffset, requestedOffset + requestedLimit)
@@ -301,10 +316,17 @@ export class SearchService {
           })),
         mode,
         semanticAvailable: false,
+        semanticStatus,
         fallback: 'keyword',
+        fallbackReason: semanticStatus === 'disabled' ? 'disabled' : 'indexing',
       };
     }
 
+    await this.searchRateLimitService.assertSemanticSearchAllowed({
+      workspaceId: opts.workspaceId,
+      userId: opts.userId,
+    });
+    const keywordPromise = this.searchPage(hybridParams, scopedOptions);
     const [keyword, semanticResult] = await Promise.all([
       keywordPromise,
       this.semanticSearchPage(hybridParams, scopedOptions)
@@ -327,6 +349,7 @@ export class SearchService {
         ).slice(requestedOffset, requestedOffset + requestedLimit),
         mode,
         semanticAvailable: true,
+        semanticStatus: 'ready',
       };
     }
 
@@ -339,7 +362,9 @@ export class SearchService {
         })),
       mode,
       semanticAvailable: false,
+      semanticStatus: 'degraded',
       fallback: 'keyword',
+      fallbackReason: 'provider_unavailable',
     };
   }
 
@@ -379,6 +404,7 @@ export class SearchService {
         highlight: string | null;
         breadcrumbs: SearchBreadcrumbDto[];
         space: SearchResponseDto['space'];
+        metadata: Json;
       }>,
     ): SearchResponseDto[] =>
       rows.map((row) => {
@@ -389,6 +415,7 @@ export class SearchService {
           icon: row.icon ?? '',
           highlight: this.normalizeSemanticHighlight(row.highlight),
           source: 'semantic' as const,
+          contentSource: this.toSearchContentSource(row.metadata),
           scores: {
             semantic: semanticScore,
             final: semanticScore,
@@ -409,6 +436,7 @@ export class SearchService {
         .select([
           'chunks.pageId',
           'chunks.content',
+          'chunks.metadata',
           sql<number>`1 - (${distance})`.as('score'),
         ])
         .distinctOn('chunks.pageId')
@@ -453,6 +481,7 @@ export class SearchService {
           'pages.updatedAt',
           'bestChunks.score as rank',
           'bestChunks.content as highlight',
+          'bestChunks.metadata',
           searchBreadcrumbsSelection(),
         ])
         .select((eb) => this.pageRepo.withSpace(eb))
@@ -494,6 +523,7 @@ export class SearchService {
             'pages.createdAt',
             'pages.updatedAt',
             'chunks.content as highlight',
+            'chunks.metadata',
             sql<number>`1 - (${distance})`.as('rank'),
             searchBreadcrumbsSelection(),
           ])
@@ -664,6 +694,10 @@ export class SearchService {
       const existing = byPageId.get(item.id);
       if (existing) {
         existing.source = 'hybrid';
+        if (item.contentSource?.type === 'attachment') {
+          existing.contentSource = item.contentSource;
+          existing.highlight = item.highlight;
+        }
         existing.scores = {
           ...existing.scores,
           semantic: Number(item.rank),
@@ -708,6 +742,68 @@ export class SearchService {
           left.id.localeCompare(right.id),
       )
       .slice(0, limit);
+  }
+
+  private async getSemanticStatus(
+    workspaceId: string,
+  ): Promise<SemanticSearchStatus> {
+    if (!this.environmentService.isVectorSearchEnabled()) {
+      return 'disabled';
+    }
+
+    try {
+      const activeChunk = await this.db
+        .selectFrom('docmostMcpChunks')
+        .select('id')
+        .where('workspaceId', '=', workspaceId)
+        .where(
+          'embeddingModel',
+          '=',
+          this.environmentService.getEmbeddingModel(),
+        )
+        .where('deletedAt', 'is', null)
+        .limit(1)
+        .executeTakeFirst();
+      return activeChunk ? 'ready' : 'indexing';
+    } catch (err) {
+      this.logger.warn({
+        event: 'search.semantic_status_failed',
+        errorType: err instanceof Error ? err.name : typeof err,
+      });
+      return 'degraded';
+    }
+  }
+
+  private assertQueryLength(query: string): void {
+    const maxLength = this.environmentService.getSearchMaxQueryLength();
+    if (query.length > maxLength) {
+      throw new BadRequestException(
+        `Search query must not exceed ${maxLength} characters`,
+      );
+    }
+  }
+
+  private toSearchContentSource(
+    value: Json | null,
+  ): SearchResponseDto['contentSource'] {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return { type: 'page' };
+    }
+
+    const metadata = value as Record<string, unknown>;
+    if (
+      metadata.sourceType === 'attachment' &&
+      typeof metadata.attachmentId === 'string' &&
+      typeof metadata.attachmentFileName === 'string'
+    ) {
+      return {
+        type: 'attachment',
+        attachmentId: metadata.attachmentId,
+        fileName: metadata.attachmentFileName,
+      };
+    }
+
+    return { type: 'page' };
   }
 
   private buildStableRankScores(

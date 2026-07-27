@@ -235,11 +235,7 @@ export class PageService {
           )))
         : undefined;
     let contentBefore = page.content;
-    if (
-      preparedContent &&
-      updatePageDto.operation !== 'replace' &&
-      typeof contentBefore === 'undefined'
-    ) {
+    if (preparedContent && typeof contentBefore === 'undefined') {
       contentBefore = (
         await this.pageRepo.findById(page.id, { includeContent: true })
       )?.content;
@@ -310,6 +306,34 @@ export class PageService {
         );
       }
     } catch (err) {
+      let contentRollbackFailed = false;
+      if (
+        preparedContent &&
+        contentBefore &&
+        typeof contentBefore === 'object' &&
+        !Array.isArray(contentBefore)
+      ) {
+        try {
+          await this.updatePageContent(
+            page.id,
+            contentBefore,
+            'replace',
+            'json',
+            user,
+            contentBefore,
+          );
+        } catch (rollbackError) {
+          contentRollbackFailed = true;
+          this.logger.error({
+            event: 'page.content_compensation_failed',
+            pageId: page.id,
+            errorType:
+              rollbackError instanceof Error
+                ? rollbackError.name
+                : typeof rollbackError,
+          });
+        }
+      }
       const rollback = await this.pageRepo.updatePage(
         {
           workspaceId: page.workspaceId,
@@ -324,7 +348,7 @@ export class PageService {
         { expectedUpdatedAt: updatedAt },
       );
 
-      if (Number(rollback.numUpdatedRows) === 0) {
+      if (contentRollbackFailed || Number(rollback.numUpdatedRows) === 0) {
         throw new ConflictException(
           'Page update requires repair after a content persistence failure',
         );

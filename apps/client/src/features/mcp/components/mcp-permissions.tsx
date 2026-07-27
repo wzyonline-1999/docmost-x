@@ -53,7 +53,6 @@ import {
   MCP_PERMISSION_COLUMNS,
 } from "@/features/mcp/utils/mcp-permission-utils";
 import { useGetSpacesQuery } from "@/features/space/queries/space-query";
-import { useWorkspaceMembersQuery } from "@/features/workspace/queries/workspace-query";
 import { useCursorPaginate } from "@/hooks/use-cursor-paginate";
 import classes from "./mcp-settings.module.css";
 
@@ -165,19 +164,10 @@ export function McpPermissions() {
     cursor: spacePagination.cursor,
     limit: 20,
   });
-  const membersQuery = useWorkspaceMembersQuery({ limit: 100 });
   const upsertMutation = useUpsertMcpPermissionMutation();
   const bulkUpsertMutation = useBulkUpsertMcpPermissionsMutation();
   const deleteMutation = useDeleteMcpPermissionMutation();
 
-  const actors = useMemo(
-    () =>
-      new Map(
-        membersQuery.data?.items.map((member) => [member.id, member.name]) ??
-          [],
-      ),
-    [membersQuery.data?.items],
-  );
   const clients = clientsQuery.data?.items ?? [];
   const refreshedSelectedClient = selectedClient
     ? clients.find((item) => item.id === selectedClient.id)
@@ -199,7 +189,7 @@ export function McpPermissions() {
   }, [clients, selectedClient]);
   const clientOptions = selectableClients.map((item) => {
     const actorName = item.actorUserId
-      ? (actors.get(item.actorUserId) ??
+      ? (item.actorUserName ??
         `${t("Representative user")} ${item.actorUserId.slice(0, 8)}`)
       : t("No representative user");
     return {

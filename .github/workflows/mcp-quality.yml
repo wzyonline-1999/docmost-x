@@ -4,22 +4,41 @@ on:
   pull_request:
     paths:
       - ".github/workflows/mcp-quality.yml"
+      - ".github/workflows/mcp-rc-image.yml"
       - ".env.example"
+      - "Dockerfile"
+      - "apps/client/package.json"
+      - "apps/client/src/App.tsx"
       - "apps/client/src/components/auth/**"
       - "apps/client/src/features/mcp/**"
+      - "apps/client/src/features/search/**"
+      - "apps/client/src/oss/hooks/use-feature*"
       - "apps/client/src/pages/settings/mcp/**"
+      - "apps/client/vite.config.ts"
+      - "apps/server/package.json"
+      - "apps/server/src/common/trusted-proxy*"
+      - "apps/server/src/core/attachment/**"
       - "apps/server/src/core/mcp/**"
       - "apps/server/src/core/page/**"
+      - "apps/server/src/core/search/**"
       - "apps/server/src/collaboration/extensions/persistence.extension.ts"
       - "apps/server/src/collaboration/extensions/persistence.extension.spec.ts"
-      - "apps/server/src/database/migrations/2026070*T*-mcp-*.ts"
-      - "apps/server/src/database/migrations/20260710T*-mcp-*.ts"
+      - "apps/server/src/database/migrations/**"
+      - "apps/server/src/database/repos/attachment/**"
       - "apps/server/src/database/repos/page/**"
       - "apps/server/src/integrations/environment/**"
+      - "apps/server/src/integrations/storage/drivers/azure.driver.ts"
+      - "apps/server/src/main.ts"
       - "apps/server/test/mcp-*.ts"
       - "ops/**"
-      - "specs/docmost-mcp-vector/**"
+      - "package.json"
       - "pnpm-lock.yaml"
+      - "scripts/check-client-bundle-budget.mjs"
+      - "scripts/generate-production-sbom.mjs"
+      - "scripts/validate-production-sbom.mjs"
+      - "specs/docmost-mcp-vector/**"
+      - "specs/reviews/**"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -32,7 +51,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     services:
       postgres:
         image: pgvector/pgvector:pg18
@@ -48,7 +67,7 @@ jobs:
           --health-timeout 3s
           --health-retries 20
       redis:
-        image: redis:8-alpine
+        image: redis:8-alpine@sha256:8096655e437712b07503796fb64d81359256cfcff0ab29d95a7da72863786efb
         ports:
           - 6379:6379
         options: >-
@@ -58,13 +77,13 @@ jobs:
           --health-retries 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -72,47 +91,76 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Review dependency changes
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: never
+
       - name: Check formatting
         run: >-
           pnpm exec prettier --check
+          ".github/workflows/mcp-*.yml"
+          "package.json"
+          "apps/client/package.json"
+          "apps/client/src/App.tsx"
+          "apps/client/src/components/auth/**/*.{ts,tsx}"
+          "apps/client/src/features/mcp/**/*.{ts,tsx,css}"
+          "apps/client/src/features/search/**/*.{ts,tsx,css}"
+          "apps/client/src/oss/hooks/use-feature*.ts"
+          "apps/client/src/pages/settings/mcp/**/*.{ts,tsx}"
+          "apps/client/vite.config.ts"
+          "apps/server/package.json"
+          "apps/server/src/common/trusted-proxy*.ts"
+          "apps/server/src/core/attachment/**/*.ts"
           "apps/server/src/core/mcp/**/*.ts"
           "apps/server/src/core/page/services/page.service.ts"
           "apps/server/src/core/page/services/page.service.optimistic-lock.spec.ts"
+          "apps/server/src/core/search/**/*.ts"
           "apps/server/src/collaboration/extensions/persistence.extension.ts"
           "apps/server/src/collaboration/extensions/persistence.extension.spec.ts"
+          "apps/server/src/database/migrations/**/*mcp*.ts"
+          "apps/server/src/database/repos/attachment/**/*.ts"
+          "apps/server/src/database/repos/page/**/*.ts"
+          "apps/server/src/integrations/environment/**/*.ts"
+          "apps/server/src/integrations/storage/drivers/azure.driver.ts"
+          "apps/server/src/main.ts"
           "apps/server/test/mcp-*.ts"
-          "apps/server/src/database/migrations/20260709T120000-mcp-vector.ts"
-          "apps/server/src/database/migrations/20260710T*-mcp-*.ts"
-          "apps/server/src/integrations/environment/environment.service.ts"
-          "apps/server/src/integrations/environment/environment.service.spec.ts"
-          "apps/server/src/integrations/environment/environment.validation.ts"
-          "apps/client/src/components/auth/**/*.{ts,tsx}"
-          "apps/client/src/features/mcp/**/*.{ts,tsx,css}"
-          "apps/client/src/pages/settings/mcp/**/*.{ts,tsx}"
           "ops/**/*.{md,yml,json}"
+          "scripts/*.mjs"
           "specs/docmost-mcp-vector/**/*.md"
+          "specs/reviews/**/*.md"
 
-      - name: Lint MCP server
+      - name: Lint server changes
         run: >-
           pnpm --filter server exec eslint
+          "src/common/trusted-proxy*.ts"
+          "src/core/attachment/**/*.ts"
           "src/core/mcp/**/*.ts"
           "src/core/page/services/page.service.ts"
           "src/core/page/services/page.service.optimistic-lock.spec.ts"
+          "src/core/search/**/*.ts"
           "src/collaboration/extensions/persistence.extension.ts"
           "src/collaboration/extensions/persistence.extension.spec.ts"
+          "src/database/migrations/**/*mcp*.ts"
+          "src/database/repos/attachment/**/*.ts"
+          "src/database/repos/page/**/*.ts"
+          "src/integrations/environment/**/*.ts"
+          "src/integrations/storage/drivers/azure.driver.ts"
+          "src/main.ts"
           "test/mcp-*.ts"
-          "src/database/migrations/20260709T120000-mcp-vector.ts"
-          "src/database/migrations/20260710T*-mcp-*.ts"
-          "src/integrations/environment/environment.service.ts"
-          "src/integrations/environment/environment.service.spec.ts"
-          "src/integrations/environment/environment.validation.ts"
 
-      - name: Lint MCP client
+      - name: Lint client changes
         run: >-
           pnpm --filter client exec eslint
+          "src/App.tsx"
           "src/components/auth/**/*.{ts,tsx}"
           "src/features/mcp/**/*.{ts,tsx}"
+          "src/features/search/**/*.{ts,tsx}"
+          "src/oss/hooks/use-feature*.ts"
           "src/pages/settings/mcp/**/*.{ts,tsx}"
+          "vite.config.ts"
 
       - name: Type check
         run: |
@@ -120,19 +168,20 @@ jobs:
           pnpm exec tsc --noEmit -p apps/client/tsconfig.json
 
       - name: Build production bundles
-        run: pnpm build
-
-      - name: Run MCP unit and protocol tests
         run: |
-          pnpm --filter server test:mcp
-          pnpm --filter server test:mcp:sdk
-          pnpm --filter server test:mcp:write-path
-          pnpm --filter server exec jest --runInBand src/integrations/environment/environment.service.spec.ts
+          pnpm build
+          pnpm check:bundle-budget
 
-      - name: Enforce MCP core coverage
+      - name: Run full server test suite
+        run: pnpm --filter server exec jest --runInBand
+
+      - name: Run full client test suite
+        run: pnpm --filter client test
+
+      - name: Enforce MCP, search, and attachment coverage
         run: |
-          pnpm --filter server test:mcp:coverage
-          pnpm --filter server test:mcp:coverage:check
+          pnpm --filter server test:quality:coverage
+          pnpm --filter server test:quality:coverage:check
 
       - name: Rehearse private-schema migrations
         env:
@@ -173,6 +222,19 @@ jobs:
             --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
             http://127.0.0.1:3100/mcp >/tmp/docmost-mcp-disabled.json
           node -e 'const value=JSON.parse(require("fs").readFileSync("/tmp/docmost-mcp-disabled.json","utf8")); if(value?.error?.message!=="MCP is disabled") process.exit(1)'
+
+      - name: Generate and validate production SBOM
+        run: |
+          pnpm generate:sbom
+          pnpm check:sbom
+
+      - name: Upload production SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: docmost-production-sbom
+          path: artifacts/docmost-production.cdx.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Scan tracked files for generated secrets
         run: |

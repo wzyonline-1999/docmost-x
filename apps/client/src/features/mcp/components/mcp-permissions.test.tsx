@@ -47,6 +47,7 @@ function makeClientsQuery(status = "active") {
       items: [
         {
           actorUserId: "actor-1",
+          actorUserName: "Test Actor",
           id: "client-1",
           name: "Codex",
           scope: "workspace",

@@ -1,5 +1,6 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 import type { EnvironmentService } from '../../../integrations/environment/environment.service';
+import type { RedisService } from '@nestjs-labs/nestjs-ioredis';
 import type { McpAuthenticatedClient } from '../types/mcp.types';
 import { McpRateLimitService } from './mcp-rate-limit.service';
 
@@ -12,6 +13,12 @@ describe('McpRateLimitService', () => {
     id: 'client-1',
     workspaceId: 'workspace-1',
   } as McpAuthenticatedClient;
+  const redis = {
+    eval: jest.fn(),
+  };
+  const redisService = {
+    getOrThrow: jest.fn(() => redis),
+  };
   let now: number;
   let service: McpRateLimitService;
 
@@ -23,6 +30,7 @@ describe('McpRateLimitService', () => {
     environmentService.getMcpRateLimitMaxRequests.mockReturnValue(2);
     service = new McpRateLimitService(
       environmentService as unknown as EnvironmentService,
+      redisService as unknown as RedisService,
     );
   });
 
@@ -30,42 +38,43 @@ describe('McpRateLimitService', () => {
     jest.restoreAllMocks();
   });
 
-  it('allows exactly the configured maximum and rejects the next request', () => {
-    expect(() => service.assertWithinLimit(client)).not.toThrow();
-    expect(() => service.assertWithinLimit(client)).not.toThrow();
+  it('allows exactly the configured maximum and rejects the next request', async () => {
+    redis.eval
+      .mockResolvedValueOnce([1, 10_000])
+      .mockResolvedValueOnce([2, 9_000])
+      .mockResolvedValueOnce([3, 8_000]);
 
-    let error: unknown;
-    try {
-      service.assertWithinLimit(client);
-    } catch (caught) {
-      error = caught;
-    }
-    expect(error).toBeInstanceOf(HttpException);
-    expect((error as HttpException).getStatus()).toBe(
-      HttpStatus.TOO_MANY_REQUESTS,
-    );
-    expect((error as Error).message).toContain('retry after 10s');
+    await expect(service.assertWithinLimit(client)).resolves.toBeUndefined();
+    await expect(service.assertWithinLimit(client)).resolves.toBeUndefined();
+    await expect(service.assertWithinLimit(client)).rejects.toMatchObject({
+      status: HttpStatus.TOO_MANY_REQUESTS,
+      message: expect.stringContaining('retry after 8s'),
+    });
   });
 
-  it('resets a bucket after the configured window', () => {
-    service.assertWithinLimit(client);
-    service.assertWithinLimit(client);
-    expect(() => service.assertWithinLimit(client)).toThrow(HttpException);
-
+  it('uses a new distributed bucket after the configured window', async () => {
+    redis.eval.mockResolvedValue([1, 10_000]);
+    await service.assertWithinLimit(client);
+    const firstKey = redis.eval.mock.calls[0][2];
     now += 10_000;
-    expect(() => service.assertWithinLimit(client)).not.toThrow();
+    await service.assertWithinLimit(client);
+    const secondKey = redis.eval.mock.calls[1][2];
+
+    expect(firstKey).not.toBe(secondKey);
   });
 
-  it('isolates buckets by both workspace and client id', () => {
-    service.assertWithinLimit(client);
-    service.assertWithinLimit(client);
+  it('isolates buckets by both workspace and client id', async () => {
+    redis.eval.mockResolvedValue([1, 10_000]);
 
-    expect(() =>
-      service.assertWithinLimit({ ...client, id: 'client-2' }),
-    ).not.toThrow();
-    expect(() =>
-      service.assertWithinLimit({ ...client, workspaceId: 'workspace-2' }),
-    ).not.toThrow();
+    await service.assertWithinLimit(client);
+    await service.assertWithinLimit({ ...client, id: 'client-2' });
+    await service.assertWithinLimit({
+      ...client,
+      workspaceId: 'workspace-2',
+    });
+
+    const keys = redis.eval.mock.calls.map((call) => call[2]);
+    expect(new Set(keys).size).toBe(3);
   });
 
   it.each([
@@ -74,7 +83,7 @@ describe('McpRateLimitService', () => {
     [-1, 10],
   ])(
     'disables limiting for non-positive window/max values (%s, %s)',
-    (windowSeconds, maxRequests) => {
+    async (windowSeconds, maxRequests) => {
       environmentService.getMcpRateLimitWindowSeconds.mockReturnValue(
         windowSeconds,
       );
@@ -83,30 +92,34 @@ describe('McpRateLimitService', () => {
       );
 
       for (let index = 0; index < 5; index += 1) {
-        expect(() => service.assertWithinLimit(client)).not.toThrow();
+        await expect(
+          service.assertWithinLimit(client),
+        ).resolves.toBeUndefined();
       }
+      expect(redis.eval).not.toHaveBeenCalled();
     },
   );
 
-  it('prunes expired buckets once the map reaches its safety threshold', () => {
+  it('charges a whole batch in one distributed increment', async () => {
+    redis.eval.mockResolvedValueOnce([5, 10_000]);
     environmentService.getMcpRateLimitMaxRequests.mockReturnValue(10);
-    environmentService.getMcpRateLimitWindowSeconds.mockReturnValue(1);
-    for (let index = 0; index < 1000; index += 1) {
-      service.assertWithinLimit({
-        ...client,
-        id: `client-${index}`,
-      });
-    }
 
-    now += 2_000;
-    service.assertWithinLimit({ ...client, id: 'fresh-client' });
+    await service.assertWithinLimit(client, 5);
 
-    const buckets = (
-      service as unknown as {
-        buckets: Map<string, unknown>;
-      }
-    ).buckets;
-    expect(buckets.size).toBe(1);
-    expect(buckets.has('workspace-1:fresh-client')).toBe(true);
+    expect(redis.eval).toHaveBeenCalledWith(
+      expect.any(String),
+      1,
+      expect.any(String),
+      5,
+      9_000,
+    );
+  });
+
+  it('fails closed when Redis is unavailable', async () => {
+    redis.eval.mockRejectedValueOnce(new Error('redis unavailable'));
+
+    await expect(service.assertWithinLimit(client)).rejects.toMatchObject({
+      status: HttpStatus.SERVICE_UNAVAILABLE,
+    });
   });
 });

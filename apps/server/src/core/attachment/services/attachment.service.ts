@@ -117,6 +117,13 @@ export class AttachmentService {
         attachment = await this.attachmentRepo.updateAttachment(
           {
             fileSize: preparedFile.fileSize,
+            textContent: null,
+            contentIndexStatus: 'pending',
+            contentIndexAttemptCount: 0,
+            contentIndexError: null,
+            contentIndexedAt: null,
+            contentIndexLeaseOwner: null,
+            contentIndexLeaseExpiresAt: null,
             updatedAt: new Date(),
           },
           attachmentId,
@@ -133,12 +140,33 @@ export class AttachmentService {
           pageId,
         });
       }
-
-      await this.queueContentIndex(attachment);
     } catch (err) {
-      // delete uploaded file on error
-      this.logger.error(err);
+      if (!isUpdate) {
+        await this.storageService
+          .delete(filePath)
+          .catch((cleanupError) =>
+            this.logger.error(
+              'Failed to clean up attachment upload',
+              cleanupError,
+            ),
+          );
+      }
+      throw err;
     }
+
+    if (isUpdate && attachment.pageId && attachment.workspaceId) {
+      this.eventEmitter.emit(EventName.ATTACHMENT_CONTENT_UPDATED, {
+        attachmentId: attachment.id,
+        pageIds: [attachment.pageId],
+        workspaceId: attachment.workspaceId,
+      });
+    }
+
+    await this.queueContentIndex(attachment).catch((err) =>
+      this.logger.warn(
+        `Failed to queue attachment content indexing for ${attachment.id}: ${err.message}`,
+      ),
+    );
 
     return attachment;
   }
@@ -214,7 +242,79 @@ export class AttachmentService {
     if (attachment.type !== AttachmentType.File) {
       throw new BadRequestException('Attachment is not a page file');
     }
-    await this.storageService.delete(attachment.filePath);
+    await this.beginAttachmentDeletion(attachment);
+  }
+
+  async resumeFileDeletion(attachmentId: string): Promise<void> {
+    let attachment = await this.db
+      .selectFrom('attachments')
+      .selectAll()
+      .where('id', '=', attachmentId)
+      .executeTakeFirst();
+    if (!attachment) {
+      return;
+    }
+
+    if (attachment.deletionStatus === 'failed') {
+      attachment = await this.db
+        .updateTable('attachments')
+        .set({
+          deletionStatus: 'deleting',
+          deletionAttemptCount: (eb) => eb('deletionAttemptCount', '+', 1),
+          deletionError: null,
+          deletionStartedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where('id', '=', attachment.id)
+        .where('deletionStatus', '=', 'failed')
+        .returningAll()
+        .executeTakeFirst();
+      if (!attachment) {
+        return;
+      }
+    }
+
+    if (attachment.deletionStatus === 'deleting') {
+      try {
+        if (await this.storageService.exists(attachment.filePath)) {
+          await this.storageService.delete(attachment.filePath);
+        }
+        const storageDeleted = await this.db
+          .updateTable('attachments')
+          .set({
+            deletionStatus: 'storage_deleted',
+            deletionError: null,
+            updatedAt: new Date(),
+          })
+          .where('id', '=', attachment.id)
+          .where('deletionStatus', '=', 'deleting')
+          .returningAll()
+          .executeTakeFirst();
+        if (storageDeleted) {
+          attachment = storageDeleted;
+        }
+      } catch (err) {
+        await this.db
+          .updateTable('attachments')
+          .set({
+            deletionStatus: 'failed',
+            deletionError: (err instanceof Error
+              ? err.message
+              : String(err)
+            ).slice(0, 2000),
+            updatedAt: new Date(),
+          })
+          .where('id', '=', attachment.id)
+          .where('deletionStatus', '=', 'deleting')
+          .execute();
+        throw err;
+      }
+    }
+
+    if (attachment.deletionStatus !== 'storage_deleted') {
+      return;
+    }
+
     await this.attachmentRepo.deleteAttachmentById(attachment.id);
     if (attachment.pageId && attachment.workspaceId) {
       this.eventEmitter.emit(EventName.ATTACHMENT_CONTENT_UPDATED, {
@@ -231,12 +331,24 @@ export class AttachmentService {
         attachment.fileExt.toLowerCase(),
       )
     ) {
+      await this.db
+        .updateTable('attachments')
+        .set({
+          contentIndexStatus: 'skipped',
+          contentIndexError: null,
+          contentIndexLeaseOwner: null,
+          contentIndexLeaseExpiresAt: null,
+          updatedAt: new Date(),
+        })
+        .where('id', '=', attachment.id)
+        .execute();
       return;
     }
     await this.attachmentQueue.add(
       QueueJob.ATTACHMENT_INDEX_CONTENT,
       { attachmentId: attachment.id },
       {
+        jobId: `attachment-content-${attachment.id}-${(attachment.contentIndexAttemptCount ?? 0) + 1}`,
         attempts: 2,
         backoff: {
           type: 'exponential',
@@ -244,6 +356,30 @@ export class AttachmentService {
         },
       },
     );
+  }
+
+  private async beginAttachmentDeletion(attachment: Attachment): Promise<void> {
+    const claimed = await this.db
+      .updateTable('attachments')
+      .set({
+        deletedAt: attachment.deletedAt ?? new Date(),
+        deletionStatus: 'deleting',
+        deletionAttemptCount: (eb) => eb('deletionAttemptCount', '+', 1),
+        deletionError: null,
+        deletionStartedAt: new Date(),
+        contentIndexLeaseOwner: null,
+        contentIndexLeaseExpiresAt: null,
+        updatedAt: new Date(),
+      })
+      .where('id', '=', attachment.id)
+      .where('deletionStatus', 'in', ['active', 'failed'])
+      .returning(['id'])
+      .executeTakeFirst();
+
+    if (!claimed && attachment.deletionStatus === 'active') {
+      return;
+    }
+    await this.resumeFileDeletion(attachment.id);
   }
 
   async uploadImage(
@@ -405,8 +541,7 @@ export class AttachmentService {
       await Promise.all(
         attachments.map(async (attachment) => {
           try {
-            await this.storageService.delete(attachment.filePath);
-            await this.attachmentRepo.deleteAttachmentById(attachment.id);
+            await this.beginAttachmentDeletion(attachment);
           } catch (err) {
             this.logger.log(
               `DeleteAiChatAttachments: failed to delete attachment ${attachment.id}:`,
@@ -432,8 +567,7 @@ export class AttachmentService {
       await Promise.all(
         attachments.map(async (attachment) => {
           try {
-            await this.storageService.delete(attachment.filePath);
-            await this.attachmentRepo.deleteAttachmentById(attachment.id);
+            await this.beginAttachmentDeletion(attachment);
           } catch (err) {
             failedDeletions.push(attachment.id);
             this.logger.log(
@@ -458,7 +592,7 @@ export class AttachmentService {
     try {
       const userAvatars = await this.db
         .selectFrom('attachments')
-        .select(['id', 'filePath'])
+        .selectAll()
         .where('creatorId', '=', userId)
         .where('type', '=', AttachmentType.Avatar)
         .execute();
@@ -470,8 +604,7 @@ export class AttachmentService {
       await Promise.all(
         userAvatars.map(async (attachment) => {
           try {
-            await this.storageService.delete(attachment.filePath);
-            await this.attachmentRepo.deleteAttachmentById(attachment.id);
+            await this.beginAttachmentDeletion(attachment);
           } catch (err) {
             this.logger.log(
               `DeleteUserAvatar: failed to delete user avatar ${attachment.id}:`,
@@ -490,7 +623,7 @@ export class AttachmentService {
       // Fetch attachments for this page from database
       const attachments = await this.db
         .selectFrom('attachments')
-        .select(['id', 'filePath'])
+        .selectAll()
         .where('pageId', '=', pageId)
         .execute();
 
@@ -503,10 +636,7 @@ export class AttachmentService {
       await Promise.all(
         attachments.map(async (attachment) => {
           try {
-            // Delete from storage
-            await this.storageService.delete(attachment.filePath);
-            // Delete from database
-            await this.attachmentRepo.deleteAttachmentById(attachment.id);
+            await this.beginAttachmentDeletion(attachment);
           } catch (err) {
             failedDeletions.push(attachment.id);
             this.logger.error(

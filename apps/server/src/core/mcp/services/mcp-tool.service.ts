@@ -43,6 +43,7 @@ import {
   McpToolContext,
   McpToolDefinition,
 } from '../types/mcp-tool.types';
+import { McpToolInputValidator } from './mcp-tool-input-validator';
 
 type PageResult = {
   id: string;
@@ -118,6 +119,8 @@ const AUDIT_PERSISTENCE_WARNING =
 @Injectable()
 export class McpToolService {
   private readonly logger = new Logger(McpToolService.name);
+  private readonly inputValidator = new McpToolInputValidator();
+  private toolDefinitions?: McpToolDefinition[];
 
   constructor(
     @InjectKysely() private readonly db: KyselyDB,
@@ -136,7 +139,10 @@ export class McpToolService {
   ) {}
 
   listTools(): McpToolDefinition[] {
-    return [
+    if (this.toolDefinitions) {
+      return this.toolDefinitions;
+    }
+    const tools: McpToolDefinition[] = [
       {
         name: 'list_spaces',
         description: 'List Docmost spaces visible to this MCP token.',
@@ -561,6 +567,10 @@ export class McpToolService {
         },
       },
     ];
+    this.toolDefinitions = tools.map((definition) =>
+      this.inputValidator.hardenDefinition(definition),
+    );
+    return this.toolDefinitions;
   }
 
   async callTool(
@@ -572,6 +582,13 @@ export class McpToolService {
     }
 
     const args = this.asObject(params.arguments);
+    const definition = this.listTools().find(
+      (candidate) => candidate.name === params.name,
+    );
+    if (!definition) {
+      throw new NotFoundException(`Unknown MCP tool: ${params.name}`);
+    }
+    this.inputValidator.validate(definition, args);
     let result: unknown;
 
     try {
@@ -1190,7 +1207,7 @@ export class McpToolService {
     const actor = await this.actorAccessService.requireActor(context.client);
     await this.actorAccessService.assertCanEditPage(actor, page);
     const expectedUpdatedAt = this.parseExpectedUpdatedAt(
-      this.optionalString(args, 'expectedUpdatedAt'),
+      this.requireString(args, 'expectedUpdatedAt'),
     );
 
     const content = this.optionalContent(args);
@@ -1213,7 +1230,7 @@ export class McpToolService {
     const preparedContent = hasContent
       ? await this.pageService.prepareProsemirrorContent(content, format)
       : undefined;
-    const idempotencyKey = this.optionalString(args, 'idempotencyKey');
+    const idempotencyKey = this.requireString(args, 'idempotencyKey');
     const beforeState = this.getPageRecoveryState(page);
     const targetState: PageRecoveryState = {
       ...beforeState,
@@ -1237,8 +1254,6 @@ export class McpToolService {
       getResourceId: (response) => this.getResponsePageId(response),
       reconcile: (record) => this.reconcilePageWrite(context, record, 'page'),
       run: async (execution) => {
-        const historyWarnings =
-          await this.pageHistoryMcpService.capturePageSnapshot(page, actor.id);
         const updatedPage = await this.pageService.update(
           page,
           {
@@ -1252,6 +1267,8 @@ export class McpToolService {
           actor,
           { expectedUpdatedAt, preparedContent },
         );
+        const historyWarnings =
+          await this.pageHistoryMcpService.capturePageSnapshot(page, actor.id);
         await execution.checkpoint({
           stage: 'page_mutated',
           resourceId: page.id,
@@ -1280,7 +1297,7 @@ export class McpToolService {
           },
           metadata: {
             contentHash: this.getContentHash(content),
-            blindUpdate: !expectedUpdatedAt,
+            blindUpdate: false,
           },
           ipAddress: context.ipAddress,
         });
@@ -1305,6 +1322,9 @@ export class McpToolService {
     const page = await this.getWritablePage(context, pageId, 'append');
     const actor = await this.actorAccessService.requireActor(context.client);
     await this.actorAccessService.assertCanEditPage(actor, page);
+    const expectedUpdatedAt = this.parseExpectedUpdatedAt(
+      this.requireString(args, 'expectedUpdatedAt'),
+    );
     const content = this.requireString(args, 'content');
     this.assertWriteContentLimit(content);
 
@@ -1316,7 +1336,7 @@ export class McpToolService {
       markdown,
       'markdown',
     );
-    const idempotencyKey = this.optionalString(args, 'idempotencyKey');
+    const idempotencyKey = this.requireString(args, 'idempotencyKey');
     const beforeState = this.getPageRecoveryState(page);
     const targetContent = this.appendPreparedContent(
       page.content,
@@ -1340,8 +1360,6 @@ export class McpToolService {
       getResourceId: (response) => this.getResponsePageId(response),
       reconcile: (record) => this.reconcilePageWrite(context, record, 'page'),
       run: async (execution) => {
-        const historyWarnings =
-          await this.pageHistoryMcpService.capturePageSnapshot(page, actor.id);
         const updatedPage = await this.pageService.update(
           page,
           {
@@ -1351,8 +1369,10 @@ export class McpToolService {
             format: 'markdown',
           },
           actor,
-          { preparedContent },
+          { expectedUpdatedAt, preparedContent },
         );
+        const historyWarnings =
+          await this.pageHistoryMcpService.capturePageSnapshot(page, actor.id);
         await execution.checkpoint({
           stage: 'page_mutated',
           resourceId: page.id,

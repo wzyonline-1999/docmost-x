@@ -2,6 +2,7 @@ import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
   ArrayMaxSize,
+  Equals,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -201,4 +202,28 @@ export class ListMcpAuditLogsDto extends PaginationOptions {
   @IsOptional()
   @IsDateString()
   to?: string;
+}
+
+export class ListMcpRepairRecordsDto extends PaginationOptions {
+  @IsOptional()
+  @IsString()
+  @IsIn(['needs_reconciliation', 'repair_required'])
+  status?: 'needs_reconciliation' | 'repair_required';
+
+  @IsOptional()
+  @IsUUID()
+  clientId?: string;
+}
+
+export class McpRepairRecordActionDto {
+  @IsUUID()
+  recordId!: string;
+
+  @IsDateString()
+  expectedUpdatedAt!: string;
+}
+
+export class DiscardMcpRepairRecordDto extends McpRepairRecordActionDto {
+  @Equals(true)
+  confirm!: true;
 }

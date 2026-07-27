@@ -1,3 +1,5 @@
-export function useHasFeature(_feature?: string) {
-  return false;
+import { Feature } from "@/oss/features";
+
+export function useHasFeature(feature?: string) {
+  return feature === Feature.ATTACHMENT_INDEXING;
 }

@@ -54,7 +54,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "docmost_mcp_index_jobs",
+          "expr": "max by (status) (docmost_mcp_index_jobs)",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
@@ -67,7 +67,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "docmost_mcp_index_oldest_job_age_seconds",
+          "expr": "max by (status) (docmost_mcp_index_oldest_job_age_seconds)",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
@@ -111,8 +111,21 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "docmost_mcp_idempotency_records",
+          "expr": "max by (status) (docmost_mcp_idempotency_records)",
           "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Persistent Metrics Snapshot Age",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "time() - max(docmost_mcp_persistent_snapshot_timestamp_seconds)",
+          "legendFormat": "age",
           "refId": "A"
         }
       ]

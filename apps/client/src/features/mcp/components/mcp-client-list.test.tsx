@@ -22,6 +22,7 @@ function makeClientQuery() {
           scope: "workspace",
           status: "active",
           actorUserId: "actor-1",
+          actorUserName: "Test Actor",
           ownerUserId: null,
           tokenLastFour: "1234",
           lastUsedAt: null,
@@ -46,12 +47,6 @@ function makeClientQuery() {
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
-}));
-
-vi.mock("@/features/workspace/queries/workspace-query", () => ({
-  useWorkspaceMembersQuery: () => ({
-    data: { items: [{ id: "actor-1", name: "Test Actor" }] },
-  }),
 }));
 
 vi.mock("@/features/mcp/queries/mcp-query", () => ({

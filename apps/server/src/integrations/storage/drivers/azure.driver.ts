@@ -37,8 +37,7 @@ export class AzureDriver implements StorageDriver {
     }
 
     this.accountUrl =
-      config.endpoint ??
-      `https://${config.accountName}.blob.core.windows.net`;
+      config.endpoint ?? `https://${config.accountName}.blob.core.windows.net`;
 
     this.sharedKeyCredential = new StorageSharedKeyCredential(
       config.accountName,
@@ -166,7 +165,7 @@ export class AzureDriver implements StorageDriver {
 
   async delete(filePath: string): Promise<void> {
     try {
-      await this.blockBlob(filePath).delete();
+      await this.blockBlob(filePath).deleteIfExists();
     } catch (err) {
       throw new Error(
         `Error deleting file ${filePath} from Azure: ${(err as Error).message}`,

@@ -25,6 +25,7 @@ describe('McpController', () => {
   };
   const tokenService = {
     authenticateToken: jest.fn(async () => client),
+    recordSuccessfulUse: jest.fn(async () => undefined),
   };
   const toolService = {
     listTools: jest.fn(() => [
@@ -47,6 +48,9 @@ describe('McpController', () => {
     recordPermissionDenied: jest.fn(),
     recordMutation: jest.fn(),
   };
+  const environmentService = {
+    getMcpMaxBatchSize: jest.fn(() => 20),
+  };
 
   let controller: McpController;
 
@@ -57,6 +61,7 @@ describe('McpController', () => {
       toolService as unknown as McpToolService,
       rateLimitService as unknown as McpRateLimitService,
       metricsService as never,
+      environmentService as never,
     );
   });
 
@@ -84,7 +89,8 @@ describe('McpController', () => {
       },
     });
     expect(tokenService.authenticateToken).toHaveBeenCalledWith('token');
-    expect(rateLimitService.assertWithinLimit).toHaveBeenCalledWith(client);
+    expect(rateLimitService.assertWithinLimit).toHaveBeenCalledWith(client, 1);
+    expect(tokenService.recordSuccessfulUse).toHaveBeenCalledWith(client.id);
     expect(metricsService.observeRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         method: 'initialize',
@@ -197,6 +203,34 @@ describe('McpController', () => {
     ]);
   });
 
+  it('rejects empty and oversized batches before authentication', async () => {
+    const emptyReply = fastifyReply();
+    const empty = await controller.handleJsonRpc([], request(), emptyReply);
+    expect(empty).toMatchObject({
+      id: null,
+      error: { code: -32600, message: expect.stringContaining('empty') },
+    });
+    expect(emptyReply.status).toHaveBeenCalledWith(HttpStatus.BAD_REQUEST);
+
+    environmentService.getMcpMaxBatchSize.mockReturnValueOnce(2);
+    const oversizedReply = fastifyReply();
+    const oversized = await controller.handleJsonRpc(
+      [
+        { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+        { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+        { jsonrpc: '2.0', id: 3, method: 'tools/list' },
+      ],
+      request(),
+      oversizedReply,
+    );
+    expect(oversized).toMatchObject({
+      id: null,
+      error: { code: -32600, message: expect.stringContaining('at most 2') },
+    });
+    expect(oversizedReply.status).toHaveBeenCalledWith(HttpStatus.BAD_REQUEST);
+    expect(tokenService.authenticateToken).not.toHaveBeenCalled();
+  });
+
   it('authenticates notifications and omits them from batch responses', async () => {
     const response = await controller.handleJsonRpc(
       [
@@ -209,7 +243,8 @@ describe('McpController', () => {
     expect(response).toEqual([
       expect.objectContaining({ id: 2, result: expect.any(Object) }),
     ]);
-    expect(tokenService.authenticateToken).toHaveBeenCalledTimes(2);
+    expect(tokenService.authenticateToken).toHaveBeenCalledTimes(1);
+    expect(rateLimitService.assertWithinLimit).toHaveBeenCalledWith(client, 2);
   });
 
   it('returns 202 with an empty body for a single notification', async () => {
@@ -240,9 +275,16 @@ describe('McpController', () => {
   });
 
   it.each([
-    [{ jsonrpc: '1.0', id: 1, method: 'tools/list' }, 'Only JSON-RPC 2.0'],
+    [
+      { jsonrpc: '1.0', id: 1, method: 'tools/list' },
+      'jsonrpc must be exactly "2.0"',
+    ],
     [{ jsonrpc: '2.0', id: 1 } as never, 'method is required'],
     [null as never, 'Invalid JSON-RPC request'],
+    [
+      { jsonrpc: '2.0', id: { unsafe: true }, method: 'tools/list' } as never,
+      'id must be a string, number, or null',
+    ],
   ])('rejects malformed JSON-RPC envelopes', async (body, message) => {
     const response = await controller.handleJsonRpc(body as never, request());
 
@@ -251,6 +293,18 @@ describe('McpController', () => {
       error: { code: -32602, message: expect.stringContaining(message) },
     });
     expect(tokenService.authenticateToken).not.toHaveBeenCalled();
+  });
+
+  it('does not answer unsupported notifications', async () => {
+    const reply = fastifyReply();
+    const response = await controller.handleJsonRpc(
+      { jsonrpc: '2.0', method: 'notifications/unknown' },
+      request(),
+      reply,
+    );
+
+    expect(response).toBeUndefined();
+    expect(reply.status).toHaveBeenCalledWith(HttpStatus.ACCEPTED);
   });
 
   it.each([undefined, [], 'bad'])(

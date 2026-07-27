@@ -38,11 +38,13 @@ export default defineConfig(({ mode }) => {
     build: {
       rolldownOptions: {
         output: {
-          advancedChunks: {
+          codeSplitting: {
+            minSize: 20 * 1024,
             groups: [
               {
                 name: "vendor-mantine",
                 test: /[\\/]node_modules[\\/]@mantine[\\/]/,
+                priority: 20,
               },
             ],
           },

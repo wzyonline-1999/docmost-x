@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   Button,
   Menu,
@@ -26,7 +26,10 @@ import {
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { useDebouncedValue } from "@mantine/hooks";
-import { useGetSpacesQuery } from "@/features/space/queries/space-query";
+import {
+  useGetSpacesQuery,
+  useSpaceQuery,
+} from "@/features/space/queries/space-query";
 import { SpaceFilterMenu } from "@/features/space/components/space-filter-menu";
 import { RadioMenuItem } from "@/components/ui/radio-menu-item";
 import { useHasFeature } from "@/oss/hooks/use-feature";
@@ -72,8 +75,12 @@ export function SearchSpotlightFilters({
     isFetching: isSpacesFetching,
     isLoading: isSpacesLoading,
   } = useGetSpacesQuery({ limit: 100 });
+  const selectedSpaceQuery = useSpaceQuery(selectedSpaceId ?? "");
   const selectedSpaceData = selectedSpaceId
-    ? spacesData?.items.find((space) => space.id === selectedSpaceId)
+    ? (spacesData?.items.find((space) => space.id === selectedSpaceId) ??
+      (currentPage?.space?.id === selectedSpaceId
+        ? currentPage.space
+        : selectedSpaceQuery.data))
     : null;
   const { data: directoryResults, isFetching: isDirectorySearchFetching } =
     useSearchSuggestionsQuery({
@@ -87,18 +94,6 @@ export function SearchSpotlightFilters({
   const directoryPages = (directoryResults?.pages ?? []).filter(
     (page): page is IPage => Boolean(page?.id),
   );
-
-  useEffect(() => {
-    if (onFiltersChange) {
-      onFiltersChange({
-        spaceId: selectedSpaceId,
-        contentType,
-        searchMode,
-        rootPageId,
-        rootPageTitle,
-      });
-    }
-  }, []);
 
   const contentTypeOptions = [
     { value: "page", label: t("Pages") },
@@ -254,7 +249,9 @@ export function SearchSpotlightFilters({
           {selectedSpaceId
             ? `${t("Space")}: ${
                 selectedSpaceData?.name ||
-                (isSpacesLoading || isSpacesFetching
+                (isSpacesLoading ||
+                isSpacesFetching ||
+                selectedSpaceQuery.isLoading
                   ? t("Current space")
                   : t("Unknown"))
               }`

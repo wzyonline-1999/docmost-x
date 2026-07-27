@@ -48,6 +48,19 @@ export function SearchSpotlight({
   spaceId,
   currentPage,
 }: SearchSpotlightProps) {
+  return (
+    <SearchSpotlightContent
+      key={`${spaceId ?? "workspace"}:${currentPage?.id ?? "index"}`}
+      spaceId={spaceId}
+      currentPage={currentPage}
+    />
+  );
+}
+
+function SearchSpotlightContent({
+  spaceId,
+  currentPage,
+}: SearchSpotlightProps) {
   const { t } = useTranslation();
   const hasAiFeature = useHasFeature(Feature.AI);
   const hasAttachmentIndexing = useHasFeature(Feature.ATTACHMENT_INDEXING);
@@ -61,6 +74,7 @@ export function SearchSpotlight({
     rootPageId?: string;
     rootPageTitle?: string;
   }>({
+    spaceId: spaceId ?? null,
     contentType: "page",
     searchMode: "hybrid",
   });
@@ -271,7 +285,8 @@ export function SearchSpotlight({
 
         {!isAiMode &&
           query.length > 0 &&
-          searchData?.fallback === "keyword" && (
+          searchData?.fallback === "keyword" &&
+          searchData.fallbackReason !== "disabled" && (
             <div className={classes.searchFallback} role="status">
               <IconInfoCircle size={14} />
               <Text size="xs">

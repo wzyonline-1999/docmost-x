@@ -29,6 +29,16 @@ export class AttachmentRepo {
     'createdAt',
     'updatedAt',
     'deletedAt',
+    'contentIndexStatus',
+    'contentIndexAttemptCount',
+    'contentIndexError',
+    'contentIndexedAt',
+    'contentIndexLeaseOwner',
+    'contentIndexLeaseExpiresAt',
+    'deletionStatus',
+    'deletionAttemptCount',
+    'deletionError',
+    'deletionStartedAt',
   ];
 
   async findById(

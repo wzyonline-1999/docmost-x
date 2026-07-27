@@ -9,6 +9,7 @@ import {
   IPageSearchParams,
   IAdvancedPageSearchResponse,
   SearchMode,
+  SemanticSearchStatus,
 } from "@/features/search/types/search.types";
 import { useHasFeature } from "@/oss/hooks/use-feature";
 import { Feature } from "@/oss/features";
@@ -24,7 +25,9 @@ export interface UnifiedSearchData {
   items: UnifiedSearchResult[];
   mode?: SearchMode;
   semanticAvailable?: boolean;
+  semanticStatus?: SemanticSearchStatus;
   fallback?: "keyword";
+  fallbackReason?: "disabled" | "indexing" | "provider_unavailable";
 }
 
 export function useUnifiedSearch(

@@ -24,6 +24,9 @@ import { McpPageHistoryService } from './services/mcp-page-history.service';
 import { McpAttachmentService } from './services/mcp-attachment.service';
 import { McpEffectivePermissionService } from './services/mcp-effective-permission.service';
 import { DeveloperApiController } from './developer-api.controller';
+import { McpDistributedTaskService } from './services/mcp-distributed-task.service';
+import { McpVectorReconciliationService } from './services/mcp-vector-reconciliation.service';
+import { McpRetentionService } from './services/mcp-retention.service';
 
 @Module({
   imports: [AttachmentModule, PageModule, StorageModule],
@@ -39,18 +42,21 @@ import { DeveloperApiController } from './developer-api.controller';
     McpActorAccessService,
     McpAuditService,
     McpEffectivePermissionService,
+    McpDistributedTaskService,
     McpEmbeddingService,
     McpIdempotencyService,
     McpMetricsService,
     McpPageHistoryService,
     McpPermissionService,
     McpRateLimitService,
+    McpRetentionService,
     McpToolService,
     McpTokenService,
     McpVectorEligibilityService,
     McpVectorIndexProcessor,
     McpVectorIndexService,
     McpVectorIndexListener,
+    McpVectorReconciliationService,
     McpVectorTextService,
   ],
   exports: [
@@ -59,16 +65,19 @@ import { DeveloperApiController } from './developer-api.controller';
     McpActorAccessService,
     McpAuditService,
     McpEffectivePermissionService,
+    McpDistributedTaskService,
     McpEmbeddingService,
     McpIdempotencyService,
     McpMetricsService,
     McpPageHistoryService,
     McpPermissionService,
     McpRateLimitService,
+    McpRetentionService,
     McpToolService,
     McpTokenService,
     McpVectorEligibilityService,
     McpVectorIndexService,
+    McpVectorReconciliationService,
     McpVectorTextService,
   ],
 })

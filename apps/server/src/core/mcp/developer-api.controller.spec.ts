@@ -26,6 +26,7 @@ describe('DeveloperApiController', () => {
   };
   const tokenService = {
     authenticateToken: jest.fn(async () => client),
+    recordSuccessfulUse: jest.fn(async () => undefined),
   };
   const toolService = {
     listTools: jest.fn(() => [
@@ -76,6 +77,7 @@ describe('DeveloperApiController', () => {
     });
     expect(tokenService.authenticateToken).toHaveBeenCalledWith('token');
     expect(rateLimitService.assertWithinLimit).toHaveBeenCalledWith(client);
+    expect(tokenService.recordSuccessfulUse).toHaveBeenCalledWith(client.id);
     expect(reply.header).toHaveBeenCalledWith(
       'X-Request-Id',
       expect.any(String),
@@ -179,12 +181,7 @@ describe('DeveloperApiController', () => {
 
   it('rejects malformed tool names before authentication', async () => {
     await expect(
-      controller.callTool(
-        '../search_docs',
-        {},
-        request(),
-        fastifyReply(),
-      ),
+      controller.callTool('../search_docs', {}, request(), fastifyReply()),
     ).rejects.toThrow('Invalid developer tool name');
     expect(tokenService.authenticateToken).not.toHaveBeenCalled();
     expect(metricsService.observeRequest).toHaveBeenCalledWith(

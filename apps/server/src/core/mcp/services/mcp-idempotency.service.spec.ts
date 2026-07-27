@@ -32,6 +32,22 @@ const client = {
   status: 'active',
 };
 
+const distributedTaskService = {
+  runWithLock: jest.fn(
+    async (_name: string, _ttlMs: number, task: () => Promise<unknown>) => ({
+      acquired: true as const,
+      value: await task(),
+    }),
+  ),
+};
+
+function createService(db: unknown) {
+  return new McpIdempotencyService(
+    db as never,
+    distributedTaskService as never,
+  );
+}
+
 function createFakeDb() {
   let sequence = 0;
   let reservation: StoredReservation | undefined;
@@ -117,6 +133,10 @@ function createFakeDb() {
 }
 
 describe('McpIdempotencyService', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   const createInput = (
     run: (execution: McpIdempotencyExecution) => Promise<unknown>,
     request = { title: 'A' },
@@ -133,7 +153,7 @@ describe('McpIdempotencyService', () => {
 
   it('runs directly when no idempotency key is provided', async () => {
     const { db } = createFakeDb();
-    const service = new McpIdempotencyService(db as never);
+    const service = createService(db);
     const run = jest.fn().mockResolvedValue({ ok: true });
 
     await expect(
@@ -146,7 +166,7 @@ describe('McpIdempotencyService', () => {
 
   it('replays a completed response without executing the operation again', async () => {
     const { db } = createFakeDb();
-    const service = new McpIdempotencyService(db as never);
+    const service = createService(db);
     const response = { page: { id: 'page-1' } };
     const run = jest.fn().mockResolvedValue(response);
     const input = createInput(run);
@@ -158,7 +178,7 @@ describe('McpIdempotencyService', () => {
 
   it('canonicalizes object keys, arrays, and undefined values in request hashes', async () => {
     const { db } = createFakeDb();
-    const service = new McpIdempotencyService(db as never);
+    const service = createService(db);
     const response = { ok: true };
     const run = jest.fn().mockResolvedValue(response);
     const baseInput = {
@@ -185,7 +205,7 @@ describe('McpIdempotencyService', () => {
 
   it('reserves a key before concurrent requests can execute twice', async () => {
     const { db } = createFakeDb();
-    const service = new McpIdempotencyService(db as never);
+    const service = createService(db);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -216,7 +236,7 @@ describe('McpIdempotencyService', () => {
 
   it('rejects reuse of a key with a different request', async () => {
     const { db } = createFakeDb();
-    const service = new McpIdempotencyService(db as never);
+    const service = createService(db);
     const run = jest.fn().mockResolvedValue({ page: { id: 'page-1' } });
 
     await service.run(createInput(run));
@@ -229,7 +249,7 @@ describe('McpIdempotencyService', () => {
 
   it('releases a failed reservation so the request can be retried', async () => {
     const { db, getReservation } = createFakeDb();
-    const service = new McpIdempotencyService(db as never);
+    const service = createService(db);
     const run = jest
       .fn()
       .mockRejectedValueOnce(new Error('write failed'))
@@ -246,7 +266,7 @@ describe('McpIdempotencyService', () => {
 
   it('marks an expired unsafe lease for reconciliation instead of replaying it', async () => {
     const { db, getReservation, patchReservation } = createFakeDb();
-    const service = new McpIdempotencyService(db as never);
+    const service = createService(db);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -272,7 +292,7 @@ describe('McpIdempotencyService', () => {
 
   it('checkpoints a mutated resource before the final response is stored', async () => {
     const { db, getReservation } = createFakeDb();
-    const service = new McpIdempotencyService(db as never);
+    const service = createService(db);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -295,7 +315,7 @@ describe('McpIdempotencyService', () => {
 
   it('keeps a checkpointed failure for reconciliation instead of replaying it', async () => {
     const { db, getReservation } = createFakeDb();
-    const service = new McpIdempotencyService(db as never);
+    const service = createService(db);
     const run = jest.fn(async (execution: McpIdempotencyExecution) => {
       await execution.checkpoint({
         stage: 'page_mutated',
@@ -318,7 +338,7 @@ describe('McpIdempotencyService', () => {
 
   it('finalizes a response reconstructed from a checkpointed resource', async () => {
     const { db, getReservation } = createFakeDb();
-    const service = new McpIdempotencyService(db as never);
+    const service = createService(db);
     const response = { page: { id: 'page-1' }, recovered: true };
     const run = jest.fn(async (execution: McpIdempotencyExecution) => {
       await execution.checkpointResourceId('page-1');
@@ -351,7 +371,7 @@ describe('McpIdempotencyService', () => {
 
   it('retries a mutation only after reconciliation confirms it is safe', async () => {
     const { db } = createFakeDb();
-    const service = new McpIdempotencyService(db as never);
+    const service = createService(db);
     const response = { page: { id: 'page-1' } };
     const run = jest
       .fn()
@@ -374,7 +394,7 @@ describe('McpIdempotencyService', () => {
 
   it('locks an ambiguous mutation in repair-required state', async () => {
     const { db, getReservation } = createFakeDb();
-    const service = new McpIdempotencyService(db as never);
+    const service = createService(db);
     const run = jest.fn(async (execution: McpIdempotencyExecution) => {
       await execution.checkpointResourceId('page-1');
       throw new Error('partial mutation');
@@ -407,7 +427,7 @@ describe('McpIdempotencyService', () => {
       executeTakeFirst,
     };
     const deleteFrom = jest.fn().mockReturnValue(deleteBuilder);
-    const service = new McpIdempotencyService({ deleteFrom } as never);
+    const service = createService({ deleteFrom });
 
     await expect(service.cleanupExpired()).resolves.toBe(3);
     expect(deleteFrom).toHaveBeenCalledWith('mcpIdempotencyKeys');
@@ -428,7 +448,7 @@ describe('McpIdempotencyService', () => {
         .mockResolvedValue([{ id: 'reservation-1' }, { id: 'reservation-2' }]),
     };
     const updateTable = jest.fn().mockReturnValue(updateBuilder);
-    const service = new McpIdempotencyService({ updateTable } as never);
+    const service = createService({ updateTable });
 
     await expect(service.markExpiredLeasesForReconciliation()).resolves.toBe(2);
     expect(updateBuilder.set).toHaveBeenCalledWith(
@@ -443,5 +463,66 @@ describe('McpIdempotencyService', () => {
       '<=',
       expect.any(Date),
     );
+  });
+
+  it('skips maintenance when another replica owns the task lock', async () => {
+    const service = createService({});
+    distributedTaskService.runWithLock.mockResolvedValueOnce({
+      acquired: false,
+    } as never);
+    const expiredSpy = jest.spyOn(
+      service,
+      'markExpiredLeasesForReconciliation',
+    );
+    const cleanupSpy = jest.spyOn(service, 'cleanupExpired');
+
+    await expect(service.maintainReservations()).resolves.toEqual({
+      expiredLeases: 0,
+      deletedRecords: 0,
+    });
+    expect(expiredSpy).not.toHaveBeenCalled();
+    expect(cleanupSpy).not.toHaveBeenCalled();
+  });
+
+  it('renews the execution lease while a long-running operation is active', async () => {
+    jest.useFakeTimers();
+    const { db } = createFakeDb();
+    const service = createService(db);
+    const renewLease = jest
+      .spyOn(
+        service as unknown as {
+          renewLease: (
+            reservationId: string,
+            leaseOwner: string,
+          ) => Promise<void>;
+        },
+        'renewLease',
+      )
+      .mockResolvedValue(undefined);
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const task = (
+      service as unknown as {
+        withLeaseHeartbeat: (
+          reservationId: string,
+          leaseOwner: string,
+          operation: () => Promise<string>,
+        ) => Promise<string>;
+      }
+    ).withLeaseHeartbeat('reservation-1', 'owner-1', async () => {
+      await gate;
+      return 'done';
+    });
+
+    try {
+      await jest.advanceTimersByTimeAsync(100_000);
+      expect(renewLease).toHaveBeenCalledWith('reservation-1', 'owner-1');
+      finish();
+      await expect(task).resolves.toBe('done');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

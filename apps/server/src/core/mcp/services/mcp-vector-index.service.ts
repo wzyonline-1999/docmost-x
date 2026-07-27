@@ -6,6 +6,7 @@ import {
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
+import { Interval } from '@nestjs/schedule';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { createHash } from 'crypto';
@@ -22,6 +23,7 @@ import {
   VectorAttachmentTextSource,
 } from './mcp-vector-text.service';
 import { McpVectorEligibilityService } from './mcp-vector-eligibility.service';
+import { McpDistributedTaskService } from './mcp-distributed-task.service';
 import { AttachmentType } from '../../attachment/attachment.constants';
 import {
   McpVectorBatchIndexInput,
@@ -66,10 +68,13 @@ type EnqueuePageOptions = {
   autoRun?: boolean;
   delayMs?: number;
   stats?: Json;
+  parentJobId?: string | null;
 };
 
 export const AUTO_INDEX_DELAY_MS = 1000;
 const MAX_BATCH_INDEX_LIMIT = 1000;
+const VECTOR_RECOVERY_INTERVAL_MS = 60 * 1000;
+const VECTOR_RECOVERY_LOCK_MS = 50 * 1000;
 export const MINIMUM_PGVECTOR_VERSION = '0.8.0';
 
 export function buildEmbeddingDimensionContractQuery(db: KyselyDB) {
@@ -121,18 +126,16 @@ export class McpVectorIndexService implements OnModuleInit {
     private readonly embeddingService: McpEmbeddingService,
     private readonly vectorTextService: McpVectorTextService,
     private readonly eligibilityService: McpVectorEligibilityService,
+    private readonly distributedTaskService: McpDistributedTaskService,
   ) {}
 
   async onModuleInit(): Promise<void> {
-    if (
-      !this.environmentService.isMcpEnabled() ||
-      !this.environmentService.isVectorSearchEnabled()
-    ) {
+    if (!this.environmentService.isVectorSearchEnabled()) {
       return;
     }
 
     await this.assertEmbeddingDimensionContract();
-    await this.recoverPendingJobs().catch((err) =>
+    await this.recoverPendingJobsWithLock().catch((err) =>
       this.logger.warn({
         event: 'mcp.vector.recovery_failed',
         errorType: getMcpErrorType(err),
@@ -151,7 +154,11 @@ export class McpVectorIndexService implements OnModuleInit {
     this.assertVectorSearchEnabled();
 
     const jobType = opts.jobType ?? 'page';
-    const dedupeKey = await this.buildPageDedupeKey(input, jobType);
+    const dedupeKey = await this.buildPageDedupeKey(
+      input,
+      jobType,
+      opts.parentJobId,
+    );
     const job = await this.createQueuedJob({
       workspaceId: input.workspaceId,
       spaceId: input.spaceId ?? null,
@@ -161,6 +168,7 @@ export class McpVectorIndexService implements OnModuleInit {
       requestedByUserId: input.requestedByUserId ?? null,
       dedupeKey,
       stats: opts.stats ?? {},
+      parentJobId: opts.parentJobId ?? null,
     });
 
     if (opts.autoRun) {
@@ -301,8 +309,17 @@ export class McpVectorIndexService implements OnModuleInit {
       pageIds: pages.map((page) => page.id),
     });
 
-    for (const pageId of eligibility.ineligiblePageIds) {
-      await this.softDeletePageChunks(input.workspaceId, pageId);
+    if (eligibility.ineligiblePageIds.length > 0) {
+      await this.db
+        .updateTable('docmostMcpChunks')
+        .set({
+          deletedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where('workspaceId', '=', input.workspaceId)
+        .where('pageId', 'in', eligibility.ineligiblePageIds)
+        .where('deletedAt', 'is', null)
+        .execute();
     }
 
     const queuedJobIds: string[] = [];
@@ -310,7 +327,29 @@ export class McpVectorIndexService implements OnModuleInit {
       input.enqueueEligible &&
       this.environmentService.isVectorSearchEnabled()
     ) {
+      const activeChunks =
+        eligibility.eligiblePageIds.length === 0
+          ? []
+          : await this.db
+              .selectFrom('docmostMcpChunks')
+              .select('pageId')
+              .distinct()
+              .where('workspaceId', '=', input.workspaceId)
+              .where('spaceId', '=', input.spaceId)
+              .where('pageId', 'in', eligibility.eligiblePageIds)
+              .where(
+                'embeddingModel',
+                '=',
+                this.environmentService.getEmbeddingModel(),
+              )
+              .where('deletedAt', 'is', null)
+              .execute();
+      const indexedPageIds = new Set(activeChunks.map((chunk) => chunk.pageId));
+
       for (const pageId of eligibility.eligiblePageIds) {
+        if (indexedPageIds.has(pageId)) {
+          continue;
+        }
         const queued = await this.enqueuePage(
           {
             workspaceId: input.workspaceId,
@@ -467,30 +506,56 @@ export class McpVectorIndexService implements OnModuleInit {
     if (job.status === 'cancelled') {
       return { jobId, status: 'cancelled', childJobCount: 0 };
     }
-    if (!['queued', 'running', 'paused'].includes(job.status)) {
+    if (!['queued', 'running', 'waiting', 'paused'].includes(job.status)) {
       throw new BadRequestException(
         'Only active MCP vector jobs can be cancelled',
       );
     }
 
-    const cancelled = await this.db
-      .updateTable('docmostMcpIndexJobs')
-      .set({
-        status: 'cancelled',
-        finishedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where('id', '=', job.id)
-      .where('status', 'in', ['queued', 'running', 'paused'])
-      .returningAll()
-      .executeTakeFirst();
-    if (!cancelled) {
-      throw new ConflictException('MCP vector job state changed before cancel');
-    }
+    const { cancelled, children } = await this.db
+      .transaction()
+      .execute(async (trx) => {
+        const now = new Date();
+        const cancelledJob = await trx
+          .updateTable('docmostMcpIndexJobs')
+          .set({
+            status: 'cancelled',
+            finishedAt: now,
+            updatedAt: now,
+          })
+          .where('id', '=', job.id)
+          .where('status', 'in', ['queued', 'running', 'waiting', 'paused'])
+          .returningAll()
+          .executeTakeFirst();
+        if (!cancelledJob) {
+          throw new ConflictException(
+            'MCP vector job state changed before cancel',
+          );
+        }
+
+        const cancelledChildren = await trx
+          .updateTable('docmostMcpIndexJobs')
+          .set({
+            status: 'cancelled',
+            finishedAt: now,
+            updatedAt: now,
+          })
+          .where('parentJobId', '=', job.id)
+          .where('status', 'in', ['queued', 'paused'])
+          .returningAll()
+          .execute();
+        return { cancelled: cancelledJob, children: cancelledChildren };
+      });
 
     await this.removeInactiveBullJob(cancelled);
-    const childJobCount = await this.cancelQueuedChildJobs(cancelled);
-    return { jobId, status: 'cancelled', childJobCount };
+    for (const child of children) {
+      await this.removeInactiveBullJob(child);
+    }
+    return {
+      jobId,
+      status: 'cancelled',
+      childJobCount: children.length,
+    };
   }
 
   async runQueuedJob(
@@ -682,11 +747,10 @@ export class McpVectorIndexService implements OnModuleInit {
 
     try {
       const persistedStats = this.asStatsObject(runningJob.stats);
-      const pageJobIds = Array.isArray(persistedStats.pageJobIds)
-        ? persistedStats.pageJobIds.filter(
-            (pageJobId): pageJobId is string => typeof pageJobId === 'string',
-          )
-        : [];
+      let queuedPageCount =
+        typeof persistedStats.queuedPageCount === 'number'
+          ? persistedStats.queuedPageCount
+          : 0;
       let cursor =
         typeof persistedStats.lastCursor === 'string'
           ? persistedStats.lastCursor
@@ -706,7 +770,7 @@ export class McpVectorIndexService implements OnModuleInit {
           return this.toControlledBatchResult(
             runningJob,
             controlStatus,
-            pageJobIds,
+            queuedPageCount,
             scannedPageCount,
             batchCount,
           );
@@ -717,7 +781,7 @@ export class McpVectorIndexService implements OnModuleInit {
         batchCount += batch.scannedPageCount > 0 ? 1 : 0;
 
         for (const page of batch.pages) {
-          const queued = await this.enqueuePage(
+          await this.enqueuePage(
             {
               workspaceId: page.workspaceId,
               spaceId: page.spaceId,
@@ -731,19 +795,19 @@ export class McpVectorIndexService implements OnModuleInit {
                 parentJobId: runningJob.id,
                 parentJobType: runningJob.jobType,
               },
+              parentJobId: runningJob.id,
             },
           );
-          pageJobIds.push(queued.jobId);
+          queuedPageCount += 1;
         }
 
         cursor = batch.nextCursor;
         await this.persistBatchProgress(runningJob.id, {
           ...persistedStats,
-          queuedPageCount: pageJobIds.length,
+          queuedPageCount,
           scannedPageCount,
           batchCount,
           lastCursor: cursor ?? null,
-          pageJobIds,
         });
 
         const statusAfterBatch = await this.getBatchControlStatus(
@@ -753,7 +817,7 @@ export class McpVectorIndexService implements OnModuleInit {
           return this.toControlledBatchResult(
             runningJob,
             statusAfterBatch,
-            pageJobIds,
+            queuedPageCount,
             scannedPageCount,
             batchCount,
           );
@@ -763,20 +827,19 @@ export class McpVectorIndexService implements OnModuleInit {
         }
       }
 
-      const succeeded = await this.markJobSucceeded(runningJob.id, {
-        queuedPageCount: pageJobIds.length,
+      const waiting = await this.markBatchWaiting(runningJob.id, {
+        queuedPageCount,
         scannedPageCount,
         batchCount,
         lastCursor: cursor ?? null,
-        pageJobIds,
       });
-      if (!succeeded) {
+      if (!waiting) {
         const finalStatus = await this.getBatchControlStatus(runningJob.id);
         if (finalStatus === 'paused' || finalStatus === 'cancelled') {
           return this.toControlledBatchResult(
             runningJob,
             finalStatus,
-            pageJobIds,
+            queuedPageCount,
             scannedPageCount,
             batchCount,
           );
@@ -786,16 +849,22 @@ export class McpVectorIndexService implements OnModuleInit {
         );
       }
 
+      const aggregated = await this.refreshParentJob(runningJob.id);
+      const status =
+        aggregated?.status === 'succeeded' ||
+        aggregated?.status === 'failed' ||
+        aggregated?.status === 'cancelled'
+          ? aggregated.status
+          : 'waiting';
       return {
         jobId: runningJob.id,
         jobType: runningJob.jobType as 'space' | 'workspace',
         workspaceId: runningJob.workspaceId,
         spaceId: runningJob.spaceId,
-        status: 'succeeded',
-        queuedPageCount: pageJobIds.length,
+        status,
+        queuedPageCount,
         scannedPageCount,
         batchCount,
-        pageJobIds,
       };
     } catch (err) {
       await this.markJobFailed(runningJob.id, err).catch((jobErr) =>
@@ -965,6 +1034,7 @@ export class McpVectorIndexService implements OnModuleInit {
     requestedByClientId?: string | null;
     requestedByUserId?: string | null;
     dedupeKey?: string | null;
+    parentJobId?: string | null;
     stats: Json;
   }) {
     const inserted = await this.db
@@ -978,13 +1048,16 @@ export class McpVectorIndexService implements OnModuleInit {
         requestedByClientId: input.requestedByClientId ?? null,
         requestedByUserId: input.requestedByUserId ?? null,
         dedupeKey: input.dedupeKey ?? null,
+        parentJobId: input.parentJobId ?? null,
         attemptCount: 0,
         stats: input.stats,
       })
       .onConflict((oc) =>
         oc
           .column('dedupeKey')
-          .where(sql<boolean>`status IN ('queued', 'running', 'paused')`)
+          .where(
+            sql<boolean>`status IN ('queued', 'running', 'waiting', 'paused')`,
+          )
           .doNothing(),
       )
       .returningAll()
@@ -999,7 +1072,7 @@ export class McpVectorIndexService implements OnModuleInit {
         .selectFrom('docmostMcpIndexJobs')
         .selectAll()
         .where('dedupeKey', '=', input.dedupeKey)
-        .where('status', 'in', ['queued', 'running', 'paused'])
+        .where('status', 'in', ['queued', 'running', 'waiting', 'paused'])
         .executeTakeFirst();
       if (existing) {
         return existing;
@@ -1012,6 +1085,7 @@ export class McpVectorIndexService implements OnModuleInit {
   private async buildPageDedupeKey(
     input: McpVectorPageInput,
     jobType: Extract<McpVectorIndexJobType, 'page' | 'delete' | 'restore'>,
+    parentJobId?: string | null,
   ): Promise<string> {
     const page = await this.getPage(input.workspaceId, input.pageId);
     const attachments = page ? await this.getPageAttachments(page) : [];
@@ -1019,6 +1093,7 @@ export class McpVectorIndexService implements OnModuleInit {
       jobType,
       input.workspaceId,
       input.pageId,
+      parentJobId ?? null,
       this.environmentService.getEmbeddingModel(),
       this.environmentService.getEmbeddingDimensions(),
       page
@@ -1169,13 +1244,16 @@ export class McpVectorIndexService implements OnModuleInit {
       })
       .where('id', '=', jobId)
       .where('status', '=', 'running')
-      .returning(['id'])
+      .returning(['id', 'parentJobId'])
       .executeTakeFirst();
+    if (result?.parentJobId) {
+      await this.refreshParentJob(result.parentJobId);
+    }
     return Boolean(result);
   }
 
   private async markJobFailed(jobId: string, err: unknown): Promise<void> {
-    await this.db
+    const failed = await this.db
       .updateTable('docmostMcpIndexJobs')
       .set({
         status: 'failed',
@@ -1185,7 +1263,97 @@ export class McpVectorIndexService implements OnModuleInit {
       })
       .where('id', '=', jobId)
       .where('status', '=', 'running')
+      .returning(['parentJobId'])
+      .executeTakeFirst();
+    if (failed?.parentJobId) {
+      await this.refreshParentJob(failed.parentJobId);
+    }
+  }
+
+  private async markBatchWaiting(
+    jobId: string,
+    stats: McpVectorIndexStats,
+  ): Promise<boolean> {
+    const result = await this.db
+      .updateTable('docmostMcpIndexJobs')
+      .set({
+        status: 'waiting',
+        stats,
+        updatedAt: new Date(),
+      })
+      .where('id', '=', jobId)
+      .where('status', '=', 'running')
+      .returning(['id'])
+      .executeTakeFirst();
+    return Boolean(result);
+  }
+
+  private async refreshParentJob(
+    parentJobId: string,
+  ): Promise<DocmostMcpIndexJob | undefined> {
+    const parent = await this.getJob(parentJobId);
+    if (!parent || parent.status !== 'waiting') {
+      return parent;
+    }
+
+    const children = await this.db
+      .selectFrom('docmostMcpIndexJobs')
+      .select(['status'])
+      .where('parentJobId', '=', parentJobId)
       .execute();
+    const childCounts = children.reduce<Record<string, number>>(
+      (counts, child) => {
+        counts[child.status] = (counts[child.status] ?? 0) + 1;
+        return counts;
+      },
+      {},
+    );
+    const activeCount = ['queued', 'running', 'waiting', 'paused'].reduce(
+      (count, status) => count + (childCounts[status] ?? 0),
+      0,
+    );
+    const stats = {
+      ...this.asStatsObject(parent.stats),
+      childCounts,
+      completedPageCount:
+        (childCounts.succeeded ?? 0) +
+        (childCounts.failed ?? 0) +
+        (childCounts.cancelled ?? 0),
+    } as McpVectorIndexStats;
+
+    if (activeCount > 0) {
+      return this.db
+        .updateTable('docmostMcpIndexJobs')
+        .set({ stats, updatedAt: new Date() })
+        .where('id', '=', parentJobId)
+        .where('status', '=', 'waiting')
+        .returningAll()
+        .executeTakeFirst();
+    }
+
+    const finalStatus =
+      (childCounts.failed ?? 0) > 0
+        ? 'failed'
+        : children.length > 0 &&
+            (childCounts.cancelled ?? 0) === children.length
+          ? 'cancelled'
+          : 'succeeded';
+    return this.db
+      .updateTable('docmostMcpIndexJobs')
+      .set({
+        status: finalStatus,
+        stats,
+        lastError:
+          finalStatus === 'failed'
+            ? 'One or more child vector index jobs failed'
+            : null,
+        finishedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where('id', '=', parentJobId)
+      .where('status', '=', 'waiting')
+      .returningAll()
+      .executeTakeFirst();
   }
 
   private async persistBatchProgress(
@@ -1215,7 +1383,7 @@ export class McpVectorIndexService implements OnModuleInit {
   private toControlledBatchResult(
     job: DocmostMcpIndexJob,
     status: 'paused' | 'cancelled',
-    pageJobIds: string[],
+    queuedPageCount: number,
     scannedPageCount: number,
     batchCount: number,
   ): McpVectorBatchIndexResult {
@@ -1225,10 +1393,9 @@ export class McpVectorIndexService implements OnModuleInit {
       workspaceId: job.workspaceId,
       spaceId: job.spaceId,
       status,
-      queuedPageCount: pageJobIds.length,
+      queuedPageCount,
       scannedPageCount,
       batchCount,
-      pageJobIds,
     };
   }
 
@@ -1242,45 +1409,20 @@ export class McpVectorIndexService implements OnModuleInit {
     await bullJob.remove();
   }
 
-  private async cancelQueuedChildJobs(
-    parentJob: DocmostMcpIndexJob,
-  ): Promise<number> {
-    const stats = this.asStatsObject(parentJob.stats);
-    const pageJobIds = Array.isArray(stats.pageJobIds)
-      ? stats.pageJobIds.filter(
-          (pageJobId): pageJobId is string => typeof pageJobId === 'string',
-        )
-      : [];
-    if (pageJobIds.length === 0) {
-      return 0;
-    }
-
-    const children = await this.db
-      .updateTable('docmostMcpIndexJobs')
-      .set({
-        status: 'cancelled',
-        finishedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where('id', 'in', pageJobIds)
-      .where('status', 'in', ['queued', 'paused'])
-      .returningAll()
-      .execute();
-    for (const child of children) {
-      await this.removeInactiveBullJob(child);
-    }
-    return children.length;
-  }
-
   private async recoverPendingJobs(): Promise<void> {
     const jobs = await this.db
       .selectFrom('docmostMcpIndexJobs')
       .selectAll()
-      .where('status', 'in', ['queued', 'running'])
+      .where('status', 'in', ['queued', 'running', 'waiting'])
       .orderBy('createdAt', 'asc')
       .execute();
 
     for (const job of jobs) {
+      if (job.status === 'waiting') {
+        await this.refreshParentJob(job.id);
+        continue;
+      }
+
       const bullJobId = this.getBullJobId(job);
       const existing = await this.vectorQueue.getJob(bullJobId);
       if (existing) {
@@ -1305,6 +1447,19 @@ export class McpVectorIndexService implements OnModuleInit {
 
       await this.enqueuePersistedJob(recoverableJob);
     }
+  }
+
+  @Interval(VECTOR_RECOVERY_INTERVAL_MS)
+  async recoverPendingJobsWithLock(): Promise<void> {
+    if (!this.environmentService.isVectorSearchEnabled()) {
+      return;
+    }
+
+    await this.distributedTaskService.runWithLock(
+      'vector-job-recovery',
+      VECTOR_RECOVERY_LOCK_MS,
+      () => this.recoverPendingJobs(),
+    );
   }
 
   private async assertEmbeddingDimensionContract(): Promise<void> {

@@ -20,11 +20,14 @@ import { UserRole } from '../../common/helpers/types/permission';
 import {
   BulkUpsertMcpClientSpacePermissionsDto,
   CreateMcpClientDto,
+  DiscardMcpRepairRecordDto,
   DeleteMcpClientSpacePermissionDto,
   GetMcpPermissionMatrixDto,
   ListMcpAuditLogsDto,
   ListMcpClientsDto,
+  ListMcpRepairRecordsDto,
   McpClientIdDto,
+  McpRepairRecordActionDto,
   RotateMcpClientTokenDto,
   UpdateMcpClientDto,
   UpsertMcpClientSpacePermissionDto,
@@ -154,6 +157,51 @@ export class McpAdminController {
   ) {
     this.assertCanManageMcp(user, workspace);
     return this.mcpAdminService.listAuditLogs(
+      workspace.id,
+      this.toPrincipal(user),
+      dto,
+    );
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('repair-records')
+  listRepairRecords(
+    @Body() dto: ListMcpRepairRecordsDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertCanManageMcp(user, workspace);
+    return this.mcpAdminService.listRepairRecords(
+      workspace.id,
+      this.toPrincipal(user),
+      dto,
+    );
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('repair-records/retry')
+  retryRepairRecord(
+    @Body() dto: McpRepairRecordActionDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertCanManageMcp(user, workspace);
+    return this.mcpAdminService.retryRepairRecord(
+      workspace.id,
+      this.toPrincipal(user),
+      dto,
+    );
+  }
+
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Post('repair-records/discard')
+  discardRepairRecord(
+    @Body() dto: DiscardMcpRepairRecordDto,
+    @AuthUser() user: User,
+    @AuthWorkspace() workspace: Workspace,
+  ) {
+    this.assertCanManageMcp(user, workspace);
+    return this.mcpAdminService.discardRepairRecord(
       workspace.id,
       this.toPrincipal(user),
       dto,

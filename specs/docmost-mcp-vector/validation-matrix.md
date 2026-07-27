@@ -34,7 +34,7 @@ verified_at: 2026-07-12
 
 | ID   | Status | Layer                | Repository evidence                                                                                                                       |
 | ---- | ------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| G-01 | PASS   | PostgreSQL           | The migration rehearsal removes all seven MCP migrations, preserves base tables, and keeps ownership repair fail-closed on rollback.     |
+| G-01 | PASS   | PostgreSQL           | The migration rehearsal removes all seven MCP migrations, preserves base tables, and keeps ownership repair fail-closed on rollback.      |
 | G-02 | PASS   | PostgreSQL           | The same rehearsal reapplies latest migrations, checks tables/indexes/constraints/vector typmod, and preserves sentinel data.             |
 | G-03 | PASS   | Unit                 | `mcp-permission.service.spec.ts` masks cross-workspace pages; `mcp-tool.service.spec.ts` masks native read denials.                       |
 | G-04 | PASS   | Unit                 | `mcp-tool.service.spec.ts` filters mixed allowed/denied search scopes and scans only actor-readable pages.                                |

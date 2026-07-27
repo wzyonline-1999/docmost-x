@@ -12,6 +12,7 @@ import {
   McpVectorIndexService,
 } from './mcp-vector-index.service';
 import type { McpVectorTextService } from './mcp-vector-text.service';
+import type { McpDistributedTaskService } from './mcp-distributed-task.service';
 
 describe('McpVectorIndexService permission eligibility', () => {
   const job = {
@@ -25,6 +26,7 @@ describe('McpVectorIndexService permission eligibility', () => {
     requestedByUserId: null,
     attemptCount: 0,
     lastError: null,
+    parentJobId: null,
     stats: {},
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -41,6 +43,7 @@ describe('McpVectorIndexService permission eligibility', () => {
     deletedAt: null,
   };
   const jobSelectQuery = {
+    select: jest.fn().mockReturnThis(),
     selectAll: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
@@ -49,6 +52,7 @@ describe('McpVectorIndexService permission eligibility', () => {
   };
   const pageSelectQuery = {
     select: jest.fn().mockReturnThis(),
+    distinct: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
     limit: jest.fn().mockReturnThis(),
@@ -123,6 +127,14 @@ describe('McpVectorIndexService permission eligibility', () => {
     evaluatePageIds: jest.fn(),
     isPageEligible: jest.fn(),
   };
+  const distributedTaskService = {
+    runWithLock: jest.fn(
+      async (_name: string, _ttlMs: number, task: () => Promise<unknown>) => ({
+        acquired: true,
+        value: await task(),
+      }),
+    ),
+  };
 
   let service: McpVectorIndexService;
 
@@ -163,6 +175,7 @@ describe('McpVectorIndexService permission eligibility', () => {
       embeddingService as unknown as McpEmbeddingService,
       vectorTextService as unknown as McpVectorTextService,
       eligibilityService as unknown as McpVectorEligibilityService,
+      distributedTaskService as unknown as McpDistributedTaskService,
     );
   });
 
@@ -230,6 +243,32 @@ describe('McpVectorIndexService permission eligibility', () => {
     expect(first).toMatch(/^[a-f0-9]{64}$/);
     expect(second).toMatch(/^[a-f0-9]{64}$/);
     expect(second).not.toBe(first);
+  });
+
+  it('isolates parent batch children in dedupe and persisted relations', async () => {
+    insertQuery.executeTakeFirst.mockResolvedValueOnce({
+      ...job,
+      parentJobId: 'parent-job-1',
+    });
+
+    await service.enqueuePage(
+      {
+        pageId: page.id,
+        workspaceId: page.workspaceId,
+        spaceId: page.spaceId,
+      },
+      {
+        autoRun: false,
+        parentJobId: 'parent-job-1',
+      },
+    );
+
+    expect(insertQuery.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parentJobId: 'parent-job-1',
+        dedupeKey: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
+    );
   });
 
   it('recovers a persisted queued job that is missing from BullMQ', async () => {
@@ -371,6 +410,51 @@ describe('McpVectorIndexService permission eligibility', () => {
     expect(db.insertInto).not.toHaveBeenCalled();
     expect(updateQuery.set).toHaveBeenCalledWith(
       expect.objectContaining({ deletedAt: expect.any(Date) }),
+    );
+  });
+
+  it('queues only eligible pages that do not already have current-model chunks', async () => {
+    const pages = [
+      { id: 'page-1', workspaceId: page.workspaceId, spaceId: page.spaceId },
+      { id: 'page-2', workspaceId: page.workspaceId, spaceId: page.spaceId },
+    ];
+    pageSelectQuery.execute
+      .mockResolvedValueOnce(pages)
+      .mockResolvedValueOnce([{ pageId: 'page-1' }]);
+    eligibilityService.evaluatePageIds.mockResolvedValueOnce({
+      eligiblePageIds: ['page-1', 'page-2'],
+      ineligiblePageIds: [],
+    });
+    const enqueuePage = jest
+      .spyOn(service, 'enqueuePage')
+      .mockResolvedValueOnce({
+        jobId: 'job-page-2',
+        jobType: 'page',
+        pageId: 'page-2',
+        spaceId: page.spaceId,
+        workspaceId: page.workspaceId,
+        status: 'queued',
+      });
+
+    await expect(
+      service.reconcileSpaceEligibility({
+        workspaceId: page.workspaceId,
+        spaceId: page.spaceId,
+        enqueueEligible: true,
+      }),
+    ).resolves.toEqual({
+      eligiblePageCount: 2,
+      ineligiblePageCount: 0,
+      queuedJobIds: ['job-page-2'],
+    });
+
+    expect(enqueuePage).toHaveBeenCalledTimes(1);
+    expect(enqueuePage).toHaveBeenCalledWith(
+      expect.objectContaining({ pageId: 'page-2' }),
+      expect.objectContaining({
+        autoRun: true,
+        stats: { trigger: 'permission_reconcile' },
+      }),
     );
   });
 
@@ -827,6 +911,7 @@ describe('McpVectorIndexService permission eligibility', () => {
       ...batchJob,
       status: 'cancelled',
     });
+    updateQuery.execute.mockResolvedValueOnce([]);
     vectorQueue.getJob.mockResolvedValueOnce({
       getState: jest.fn().mockResolvedValue('active'),
       remove: jest.fn(),
@@ -839,6 +924,92 @@ describe('McpVectorIndexService permission eligibility', () => {
     });
     expect(updateQuery.set).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'cancelled' }),
+    );
+    expect(transactionExecute).toHaveBeenCalledTimes(1);
+    expect(updateQuery.where).toHaveBeenCalledWith(
+      'parentJobId',
+      '=',
+      batchJob.id,
+    );
+  });
+
+  it('finalizes a waiting parent only after all children succeed', async () => {
+    const parent = {
+      ...job,
+      id: 'parent-job-1',
+      pageId: null,
+      jobType: 'space',
+      status: 'waiting',
+      stats: { queuedPageCount: 2 },
+    };
+    jobSelectQuery.executeTakeFirst.mockResolvedValueOnce(parent);
+    jobSelectQuery.execute.mockResolvedValueOnce([
+      { status: 'succeeded' },
+      { status: 'succeeded' },
+    ]);
+    updateQuery.executeTakeFirst.mockResolvedValueOnce({
+      ...parent,
+      status: 'succeeded',
+      stats: {
+        queuedPageCount: 2,
+        childCounts: { succeeded: 2 },
+        completedPageCount: 2,
+      },
+    });
+
+    const result = await (
+      service as unknown as {
+        refreshParentJob: (
+          parentJobId: string,
+        ) => Promise<{ status: string; stats: unknown } | undefined>;
+      }
+    ).refreshParentJob(parent.id);
+
+    expect(result).toMatchObject({
+      status: 'succeeded',
+      stats: {
+        childCounts: { succeeded: 2 },
+        completedPageCount: 2,
+      },
+    });
+    expect(updateQuery.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'succeeded',
+        finishedAt: expect.any(Date),
+      }),
+    );
+  });
+
+  it('propagates a child failure to the waiting parent', async () => {
+    const parent = {
+      ...job,
+      id: 'parent-job-2',
+      pageId: null,
+      jobType: 'workspace',
+      status: 'waiting',
+      stats: { queuedPageCount: 2 },
+    };
+    jobSelectQuery.executeTakeFirst.mockResolvedValueOnce(parent);
+    jobSelectQuery.execute.mockResolvedValueOnce([
+      { status: 'succeeded' },
+      { status: 'failed' },
+    ]);
+    updateQuery.executeTakeFirst.mockResolvedValueOnce({
+      ...parent,
+      status: 'failed',
+    });
+
+    await (
+      service as unknown as {
+        refreshParentJob: (parentJobId: string) => Promise<unknown>;
+      }
+    ).refreshParentJob(parent.id);
+
+    expect(updateQuery.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'failed',
+        lastError: 'One or more child vector index jobs failed',
+      }),
     );
   });
 });

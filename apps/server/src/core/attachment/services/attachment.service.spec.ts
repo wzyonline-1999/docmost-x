@@ -20,12 +20,23 @@ describe('AttachmentService MCP buffer operations', () => {
     createdAt: new Date('2026-07-11T00:00:00.000Z'),
     updatedAt: new Date('2026-07-11T00:00:00.000Z'),
     deletedAt: null,
+    contentIndexStatus: 'pending',
+    contentIndexAttemptCount: 0,
+    contentIndexError: null,
+    contentIndexedAt: null,
+    contentIndexLeaseOwner: null,
+    contentIndexLeaseExpiresAt: null,
+    deletionStatus: 'active',
+    deletionAttemptCount: 0,
+    deletionError: null,
+    deletionStartedAt: null,
   };
 
   const createHarness = () => {
     const storageService = {
       upload: jest.fn().mockResolvedValue(undefined),
       delete: jest.fn().mockResolvedValue(undefined),
+      exists: jest.fn().mockResolvedValue(true),
     };
     const attachmentRepo = {
       insertAttachment: jest.fn().mockResolvedValue(attachment),
@@ -35,13 +46,41 @@ describe('AttachmentService MCP buffer operations', () => {
       add: jest.fn().mockResolvedValue(undefined),
     };
     const eventEmitter = { emit: jest.fn() };
+    const updateQuery = {
+      set: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      returning: jest.fn().mockReturnThis(),
+      returningAll: jest.fn().mockReturnThis(),
+      execute: jest.fn().mockResolvedValue(undefined),
+      executeTakeFirst: jest
+        .fn()
+        .mockResolvedValueOnce({ id: attachment.id })
+        .mockResolvedValue({
+          ...attachment,
+          deletedAt: new Date(),
+          deletionStatus: 'storage_deleted',
+        }),
+    };
+    const selectQuery = {
+      selectAll: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      executeTakeFirst: jest.fn().mockResolvedValue({
+        ...attachment,
+        deletedAt: new Date(),
+        deletionStatus: 'deleting',
+      }),
+    };
+    const db = {
+      updateTable: jest.fn(() => updateQuery),
+      selectFrom: jest.fn(() => selectQuery),
+    };
     const service = new AttachmentService(
       storageService as never,
       attachmentRepo as never,
       {} as never,
       {} as never,
       {} as never,
-      {} as never,
+      db as never,
       attachmentQueue as never,
       eventEmitter as never,
     );
@@ -52,6 +91,9 @@ describe('AttachmentService MCP buffer operations', () => {
       attachmentRepo,
       attachmentQueue,
       eventEmitter,
+      db,
+      updateQuery,
+      selectQuery,
     };
   };
 
@@ -176,6 +218,41 @@ describe('AttachmentService MCP buffer operations', () => {
         pageIds: [attachment.pageId],
         workspaceId: attachment.workspaceId,
       },
+    );
+  });
+
+  it('keeps a recoverable storage_deleted row when metadata deletion fails', async () => {
+    const harness = createHarness();
+    harness.attachmentRepo.deleteAttachmentById.mockRejectedValueOnce(
+      new Error('database unavailable'),
+    );
+
+    await expect(
+      harness.service.deleteFileAttachment(attachment as never),
+    ).rejects.toThrow('database unavailable');
+
+    expect(harness.storageService.delete).toHaveBeenCalledWith(
+      attachment.filePath,
+    );
+    expect(harness.updateQuery.set).toHaveBeenCalledWith(
+      expect.objectContaining({ deletionStatus: 'storage_deleted' }),
+    );
+  });
+
+  it('finishes metadata deletion without deleting storage twice', async () => {
+    const harness = createHarness();
+    harness.selectQuery.executeTakeFirst.mockResolvedValueOnce({
+      ...attachment,
+      deletedAt: new Date(),
+      deletionStatus: 'storage_deleted',
+    });
+
+    await harness.service.resumeFileDeletion(attachment.id);
+
+    expect(harness.storageService.exists).not.toHaveBeenCalled();
+    expect(harness.storageService.delete).not.toHaveBeenCalled();
+    expect(harness.attachmentRepo.deleteAttachmentById).toHaveBeenCalledWith(
+      attachment.id,
     );
   });
 

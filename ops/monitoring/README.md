@@ -29,3 +29,8 @@ Load `mcp-alerts.yml` as a Prometheus rule file and import
 `grafana/docmost-mcp-dashboard.json` into Grafana. Alert thresholds are release
 defaults and should be tuned after the non-sensitive canary workspace produces
 at least one week of baseline traffic.
+
+For multi-replica deployments, scrape every application replica. Request
+counters and histograms are summed across replicas. Database-backed gauges use
+a Redis-coordinated shared snapshot, and the supplied dashboard and alerts use
+`max by (status)` so that identical snapshots are not counted once per replica.

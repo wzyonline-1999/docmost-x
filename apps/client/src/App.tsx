@@ -1,33 +1,68 @@
+import {
+  lazy,
+  Suspense,
+  type ComponentType,
+  type LazyExoticComponent,
+  type ReactNode,
+} from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
-import SetupWorkspace from "@/pages/auth/setup-workspace.tsx";
-import LoginPage from "@/pages/auth/login";
-import Home from "@/pages/dashboard/home";
-import Page from "@/pages/page/page";
-import AccountSettings from "@/pages/settings/account/account-settings";
-import WorkspaceMembers from "@/pages/settings/workspace/workspace-members";
-import WorkspaceSettings from "@/pages/settings/workspace/workspace-settings";
-import Groups from "@/pages/settings/group/groups";
-import GroupInfo from "./pages/settings/group/group-info";
-import Spaces from "@/pages/settings/space/spaces.tsx";
+import { Center, Loader } from "@mantine/core";
 import { Error404 } from "@/components/ui/error-404.tsx";
-import AccountPreferences from "@/pages/settings/account/account-preferences.tsx";
-import SpaceHome from "@/pages/space/space-home.tsx";
-import PageRedirect from "@/pages/page/page-redirect.tsx";
-import Layout from "@/components/layouts/global/layout.tsx";
-import InviteSignup from "@/pages/auth/invite-signup.tsx";
-import ForgotPassword from "@/pages/auth/forgot-password.tsx";
-import PasswordReset from "./pages/auth/password-reset";
-import SharedPage from "@/pages/share/shared-page.tsx";
-import Shares from "@/pages/settings/shares/shares.tsx";
-import ShareLayout from "@/features/share/components/share-layout.tsx";
-import ShareRedirect from "@/pages/share/share-redirect.tsx";
 import { useTrackOrigin } from "@/hooks/use-track-origin";
-import SpacesPage from "@/pages/spaces/spaces.tsx";
-import SpaceTrash from "@/pages/space/space-trash.tsx";
-import FavoritesPage from "@/pages/favorites/favorites-page";
-import LabelPage from "@/pages/label/label-page";
-import AdminRoute from "@/components/auth/admin-route";
-import McpSettings from "@/pages/settings/mcp/mcp-settings";
+
+const Layout = lazy(() => import("@/components/layouts/global/layout.tsx"));
+const ShareLayout = lazy(
+  () => import("@/features/share/components/share-layout.tsx"),
+);
+const AdminRoute = lazy(() => import("@/components/auth/admin-route"));
+const SetupWorkspace = lazy(() => import("@/pages/auth/setup-workspace.tsx"));
+const LoginPage = lazy(() => import("@/pages/auth/login"));
+const InviteSignup = lazy(() => import("@/pages/auth/invite-signup.tsx"));
+const ForgotPassword = lazy(() => import("@/pages/auth/forgot-password.tsx"));
+const PasswordReset = lazy(() => import("@/pages/auth/password-reset"));
+const Home = lazy(() => import("@/pages/dashboard/home"));
+const Page = lazy(() => import("@/pages/page/page"));
+const PageRedirect = lazy(() => import("@/pages/page/page-redirect.tsx"));
+const SharedPage = lazy(() => import("@/pages/share/shared-page.tsx"));
+const ShareRedirect = lazy(() => import("@/pages/share/share-redirect.tsx"));
+const SpacesPage = lazy(() => import("@/pages/spaces/spaces.tsx"));
+const FavoritesPage = lazy(() => import("@/pages/favorites/favorites-page"));
+const LabelPage = lazy(() => import("@/pages/label/label-page"));
+const SpaceHome = lazy(() => import("@/pages/space/space-home.tsx"));
+const SpaceTrash = lazy(() => import("@/pages/space/space-trash.tsx"));
+const AccountSettings = lazy(
+  () => import("@/pages/settings/account/account-settings"),
+);
+const AccountPreferences = lazy(
+  () => import("@/pages/settings/account/account-preferences.tsx"),
+);
+const WorkspaceMembers = lazy(
+  () => import("@/pages/settings/workspace/workspace-members"),
+);
+const WorkspaceSettings = lazy(
+  () => import("@/pages/settings/workspace/workspace-settings"),
+);
+const Groups = lazy(() => import("@/pages/settings/group/groups"));
+const GroupInfo = lazy(() => import("@/pages/settings/group/group-info"));
+const Spaces = lazy(() => import("@/pages/settings/space/spaces.tsx"));
+const Shares = lazy(() => import("@/pages/settings/shares/shares.tsx"));
+const McpSettings = lazy(() => import("@/pages/settings/mcp/mcp-settings"));
+
+function routeElement(
+  Component: LazyExoticComponent<ComponentType>,
+): ReactNode {
+  return (
+    <Suspense
+      fallback={
+        <Center mih="40vh" aria-label="Loading page">
+          <Loader size="sm" />
+        </Center>
+      }
+    >
+      <Component />
+    </Suspense>
+  );
+}
 
 export default function App() {
   useTrackOrigin();
@@ -36,46 +71,73 @@ export default function App() {
     <>
       <Routes>
         <Route index element={<Navigate to="/home" />} />
-        <Route path={"/login"} element={<LoginPage />} />
-        <Route path={"/invites/:invitationId"} element={<InviteSignup />} />
-        <Route path={"/forgot-password"} element={<ForgotPassword />} />
-        <Route path={"/password-reset"} element={<PasswordReset />} />
-        <Route path={"/setup/register"} element={<SetupWorkspace />} />
+        <Route path={"/login"} element={routeElement(LoginPage)} />
+        <Route
+          path={"/invites/:invitationId"}
+          element={routeElement(InviteSignup)}
+        />
+        <Route
+          path={"/forgot-password"}
+          element={routeElement(ForgotPassword)}
+        />
+        <Route path={"/password-reset"} element={routeElement(PasswordReset)} />
+        <Route
+          path={"/setup/register"}
+          element={routeElement(SetupWorkspace)}
+        />
 
-        <Route element={<ShareLayout />}>
+        <Route element={routeElement(ShareLayout)}>
           <Route
             path={"/share/:shareId/p/:pageSlug"}
-            element={<SharedPage />}
+            element={routeElement(SharedPage)}
           />
-          <Route path={"/share/p/:pageSlug"} element={<SharedPage />} />
+          <Route
+            path={"/share/p/:pageSlug"}
+            element={routeElement(SharedPage)}
+          />
         </Route>
 
-        <Route path={"/share/:shareId"} element={<ShareRedirect />} />
-        <Route path={"/p/:pageSlug"} element={<PageRedirect />} />
+        <Route path={"/share/:shareId"} element={routeElement(ShareRedirect)} />
+        <Route path={"/p/:pageSlug"} element={routeElement(PageRedirect)} />
 
-        <Route element={<Layout />}>
-          <Route path={"/home"} element={<Home />} />
-          <Route path={"/spaces"} element={<SpacesPage />} />
-          <Route path={"/favorites"} element={<FavoritesPage />} />
-          <Route path={"/labels/:labelName"} element={<LabelPage />} />
-          <Route path={"/s/:spaceSlug"} element={<SpaceHome />} />
-          <Route path={"/s/:spaceSlug/trash"} element={<SpaceTrash />} />
-          <Route path={"/s/:spaceSlug/p/:pageSlug"} element={<Page />} />
+        <Route element={routeElement(Layout)}>
+          <Route path={"/home"} element={routeElement(Home)} />
+          <Route path={"/spaces"} element={routeElement(SpacesPage)} />
+          <Route path={"/favorites"} element={routeElement(FavoritesPage)} />
+          <Route
+            path={"/labels/:labelName"}
+            element={routeElement(LabelPage)}
+          />
+          <Route path={"/s/:spaceSlug"} element={routeElement(SpaceHome)} />
+          <Route
+            path={"/s/:spaceSlug/trash"}
+            element={routeElement(SpaceTrash)}
+          />
+          <Route
+            path={"/s/:spaceSlug/p/:pageSlug"}
+            element={routeElement(Page)}
+          />
 
           <Route path={"/settings"}>
-            <Route path={"account/profile"} element={<AccountSettings />} />
+            <Route
+              path={"account/profile"}
+              element={routeElement(AccountSettings)}
+            />
             <Route
               path={"account/preferences"}
-              element={<AccountPreferences />}
+              element={routeElement(AccountPreferences)}
             />
-            <Route path={"workspace"} element={<WorkspaceSettings />} />
-            <Route path={"members"} element={<WorkspaceMembers />} />
-            <Route path={"groups"} element={<Groups />} />
-            <Route path={"groups/:groupId"} element={<GroupInfo />} />
-            <Route path={"spaces"} element={<Spaces />} />
-            <Route path={"sharing"} element={<Shares />} />
-            <Route element={<AdminRoute />}>
-              <Route path={"mcp"} element={<McpSettings />} />
+            <Route
+              path={"workspace"}
+              element={routeElement(WorkspaceSettings)}
+            />
+            <Route path={"members"} element={routeElement(WorkspaceMembers)} />
+            <Route path={"groups"} element={routeElement(Groups)} />
+            <Route path={"groups/:groupId"} element={routeElement(GroupInfo)} />
+            <Route path={"spaces"} element={routeElement(Spaces)} />
+            <Route path={"sharing"} element={routeElement(Shares)} />
+            <Route element={routeElement(AdminRoute)}>
+              <Route path={"mcp"} element={routeElement(McpSettings)} />
             </Route>
           </Route>
         </Route>

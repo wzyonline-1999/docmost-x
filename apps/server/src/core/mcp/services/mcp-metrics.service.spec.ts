@@ -18,6 +18,16 @@ describe('McpMetricsService', () => {
       table === 'docmostMcpIndexJobs' ? jobQuery : idempotencyQuery,
     ),
   };
+  const distributedTaskService = {
+    runOncePerWindow: jest.fn(),
+  };
+  const redis = {
+    get: jest.fn(),
+    set: jest.fn(),
+  };
+  const redisService = {
+    getOrThrow: jest.fn(() => redis),
+  };
 
   let service: McpMetricsService;
 
@@ -33,7 +43,19 @@ describe('McpMetricsService', () => {
     idempotencyQuery.execute.mockResolvedValue([
       { status: 'needs_reconciliation', count: 1 },
     ]);
-    service = new McpMetricsService(db as never);
+    distributedTaskService.runOncePerWindow.mockImplementation(
+      async (_name: string, _ttlMs: number, task: () => Promise<unknown>) => ({
+        acquired: true,
+        value: await task(),
+      }),
+    );
+    redis.get.mockResolvedValue(null);
+    redis.set.mockResolvedValue('OK');
+    service = new McpMetricsService(
+      db as never,
+      distributedTaskService as never,
+      redisService as never,
+    );
   });
 
   it('exports request, mutation, denial, audit, and embedding metrics', async () => {
@@ -71,6 +93,41 @@ describe('McpMetricsService', () => {
     );
     expect(metrics).toMatch(
       /docmost_mcp_index_oldest_job_age_seconds\{status="queued"\} 3\d(?:\.\d+)?/,
+    );
+    expect(metrics).toContain('docmost_mcp_persistent_snapshot_available 1');
+    expect(redis.set).toHaveBeenCalledWith(
+      'docmost:mcp:metrics:persistent-gauge-snapshot',
+      expect.any(String),
+      'PX',
+      60_000,
+    );
+  });
+
+  it('reuses the shared snapshot without scanning durable tables', async () => {
+    distributedTaskService.runOncePerWindow.mockResolvedValueOnce({
+      acquired: false,
+    });
+    redis.get.mockResolvedValueOnce(
+      JSON.stringify({
+        generatedAt: Date.now() / 1_000,
+        jobs: [
+          {
+            status: 'running',
+            count: 3,
+            oldestCreatedAt: new Date(Date.now() - 10_000).toISOString(),
+          },
+        ],
+        idempotency: [{ status: 'completed', count: 5 }],
+      }),
+    );
+
+    await service.refreshPersistentGauges();
+
+    expect(db.selectFrom).not.toHaveBeenCalled();
+    const metrics = await service.metrics();
+    expect(metrics).toContain('docmost_mcp_index_jobs{status="running"} 3');
+    expect(metrics).toContain(
+      'docmost_mcp_idempotency_records{status="completed"} 5',
     );
   });
 

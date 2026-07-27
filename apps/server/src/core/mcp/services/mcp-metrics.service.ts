@@ -11,8 +11,24 @@ import {
 import { sql } from 'kysely';
 import { KyselyDB } from '@docmost/db/types/kysely.types';
 import { getMcpErrorType } from '../utils/mcp-error.util';
+import { McpDistributedTaskService } from './mcp-distributed-task.service';
+import { RedisService } from '@nestjs-labs/nestjs-ioredis';
+import type { Redis } from 'ioredis';
 
 const PERSISTENT_GAUGE_REFRESH_MS = 15_000;
+const PERSISTENT_GAUGE_SNAPSHOT_TTL_MS = 60_000;
+const PERSISTENT_GAUGE_SNAPSHOT_KEY =
+  'docmost:mcp:metrics:persistent-gauge-snapshot';
+
+type PersistentGaugeSnapshot = {
+  generatedAt: number;
+  jobs: Array<{
+    status: string;
+    count: number;
+    oldestCreatedAt: string | null;
+  }>;
+  idempotency: Array<{ status: string; count: number }>;
+};
 
 @Injectable()
 export class McpMetricsService {
@@ -86,8 +102,24 @@ export class McpMetricsService {
     labelNames: ['status'] as const,
     registers: [this.registry],
   });
+  private readonly persistentSnapshotTimestamp = new Gauge({
+    name: 'docmost_mcp_persistent_snapshot_timestamp_seconds',
+    help: 'Unix timestamp of the shared persistent-state metrics snapshot.',
+    registers: [this.registry],
+  });
+  private readonly persistentSnapshotAvailable = new Gauge({
+    name: 'docmost_mcp_persistent_snapshot_available',
+    help: 'Whether this replica can read the shared persistent-state snapshot.',
+    registers: [this.registry],
+  });
+  private readonly redis: Redis;
 
-  constructor(@InjectKysely() private readonly db: KyselyDB) {
+  constructor(
+    @InjectKysely() private readonly db: KyselyDB,
+    private readonly distributedTaskService: McpDistributedTaskService,
+    redisService: RedisService,
+  ) {
+    this.redis = redisService.getOrThrow();
     collectDefaultMetrics({ prefix: 'docmost_', register: this.registry });
   }
 
@@ -138,42 +170,32 @@ export class McpMetricsService {
   @Interval(PERSISTENT_GAUGE_REFRESH_MS)
   async refreshPersistentGauges(): Promise<void> {
     try {
-      const [jobs, idempotency] = await Promise.all([
-        this.db
-          .selectFrom('docmostMcpIndexJobs')
-          .select([
-            'status',
-            sql<number>`count(*)::int`.as('count'),
-            sql<Date>`min(created_at)`.as('oldestCreatedAt'),
-          ])
-          .groupBy('status')
-          .execute(),
-        this.db
-          .selectFrom('mcpIdempotencyKeys')
-          .select(['status', sql<number>`count(*)::int`.as('count')])
-          .where('deletedAt', 'is', null)
-          .groupBy('status')
-          .execute(),
-      ]);
-
-      this.indexJobs.reset();
-      this.oldestIndexJobAge.reset();
-      for (const row of jobs) {
-        this.indexJobs.set({ status: row.status }, Number(row.count));
-        const oldest = row.oldestCreatedAt
-          ? new Date(row.oldestCreatedAt).getTime()
-          : Date.now();
-        this.oldestIndexJobAge.set(
-          { status: row.status },
-          Math.max(0, (Date.now() - oldest) / 1000),
-        );
+      const refresh = await this.distributedTaskService.runOncePerWindow(
+        'persistent-metrics',
+        PERSISTENT_GAUGE_REFRESH_MS,
+        async () => {
+          const snapshot = await this.loadPersistentGaugeSnapshot();
+          await this.redis.set(
+            PERSISTENT_GAUGE_SNAPSHOT_KEY,
+            JSON.stringify(snapshot),
+            'PX',
+            PERSISTENT_GAUGE_SNAPSHOT_TTL_MS,
+          );
+          return snapshot;
+        },
+      );
+      const snapshot = refresh.acquired
+        ? refresh.value
+        : await this.readPersistentGaugeSnapshot();
+      if (!snapshot) {
+        this.persistentSnapshotAvailable.set(0);
+        return;
       }
 
-      this.idempotencyRecords.reset();
-      for (const row of idempotency) {
-        this.idempotencyRecords.set({ status: row.status }, Number(row.count));
-      }
+      this.applyPersistentGaugeSnapshot(snapshot);
+      this.persistentSnapshotAvailable.set(1);
     } catch (err) {
+      this.persistentSnapshotAvailable.set(0);
       this.logger.warn({
         event: 'mcp.metrics.refresh_failed',
         errorType: getMcpErrorType(err),
@@ -187,6 +209,81 @@ export class McpMetricsService {
 
   metrics(): Promise<string> {
     return this.registry.metrics();
+  }
+
+  private async loadPersistentGaugeSnapshot(): Promise<PersistentGaugeSnapshot> {
+    const [jobs, idempotency] = await Promise.all([
+      this.db
+        .selectFrom('docmostMcpIndexJobs')
+        .select([
+          'status',
+          sql<number>`count(*)::int`.as('count'),
+          sql<Date>`min(created_at)`.as('oldestCreatedAt'),
+        ])
+        .groupBy('status')
+        .execute(),
+      this.db
+        .selectFrom('mcpIdempotencyKeys')
+        .select(['status', sql<number>`count(*)::int`.as('count')])
+        .where('deletedAt', 'is', null)
+        .groupBy('status')
+        .execute(),
+    ]);
+
+    return {
+      generatedAt: Date.now() / 1_000,
+      jobs: jobs.map((row) => ({
+        status: row.status,
+        count: Number(row.count),
+        oldestCreatedAt: row.oldestCreatedAt
+          ? new Date(row.oldestCreatedAt).toISOString()
+          : null,
+      })),
+      idempotency: idempotency.map((row) => ({
+        status: row.status,
+        count: Number(row.count),
+      })),
+    };
+  }
+
+  private async readPersistentGaugeSnapshot(): Promise<PersistentGaugeSnapshot | null> {
+    const value = await this.redis.get(PERSISTENT_GAUGE_SNAPSHOT_KEY);
+    if (!value) {
+      return null;
+    }
+
+    const parsed = JSON.parse(value) as Partial<PersistentGaugeSnapshot>;
+    if (
+      !Number.isFinite(parsed.generatedAt) ||
+      !Array.isArray(parsed.jobs) ||
+      !Array.isArray(parsed.idempotency)
+    ) {
+      throw new Error('Invalid persistent metrics snapshot');
+    }
+    return parsed as PersistentGaugeSnapshot;
+  }
+
+  private applyPersistentGaugeSnapshot(
+    snapshot: PersistentGaugeSnapshot,
+  ): void {
+    this.indexJobs.reset();
+    this.oldestIndexJobAge.reset();
+    for (const row of snapshot.jobs) {
+      this.indexJobs.set({ status: row.status }, row.count);
+      const oldest = row.oldestCreatedAt
+        ? new Date(row.oldestCreatedAt).getTime()
+        : snapshot.generatedAt * 1_000;
+      this.oldestIndexJobAge.set(
+        { status: row.status },
+        Math.max(0, (Date.now() - oldest) / 1_000),
+      );
+    }
+
+    this.idempotencyRecords.reset();
+    for (const row of snapshot.idempotency) {
+      this.idempotencyRecords.set({ status: row.status }, row.count);
+    }
+    this.persistentSnapshotTimestamp.set(snapshot.generatedAt);
   }
 
   private normalizeLabel(value: string): string {

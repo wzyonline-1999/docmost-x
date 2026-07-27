@@ -6,10 +6,15 @@ describe('SearchService', () => {
   const dependency = {} as never;
   const environmentService = {
     isVectorSearchEnabled: jest.fn(() => true),
+    getEmbeddingModel: jest.fn(() => 'embedding-model'),
+    getSearchMaxQueryLength: jest.fn(() => 1000),
     getVectorHybridKeywordWeight: jest.fn(() => 0.25),
     getVectorHybridSemanticWeight: jest.fn(() => 0.65),
     getVectorHybridRecencyWeight: jest.fn(() => 0.1),
   } as never;
+  const searchRateLimitService = {
+    assertSemanticSearchAllowed: jest.fn(),
+  };
   const pageTreeScopeService = {
     resolveReadableSubtree: jest.fn(),
   };
@@ -35,7 +40,11 @@ describe('SearchService', () => {
       environmentService,
       dependency,
       pageTreeScopeService as never,
+      searchRateLimitService as never,
     );
+    jest
+      .spyOn(service as never, 'getSemanticStatus' as never)
+      .mockResolvedValue('ready' as never);
   });
 
   it('should be defined', () => {
@@ -44,6 +53,9 @@ describe('SearchService', () => {
 
   it('falls back to keyword results when vectors are disabled', async () => {
     (environmentService as any).isVectorSearchEnabled.mockReturnValue(false);
+    ((service as any).getSemanticStatus as jest.Mock).mockResolvedValueOnce(
+      'disabled',
+    );
     jest.spyOn(service, 'searchPage').mockResolvedValue({
       items: [searchResult('keyword-page', 0.7)],
     });
@@ -54,8 +66,52 @@ describe('SearchService', () => {
     );
 
     expect(result.fallback).toBe('keyword');
+    expect(result.fallbackReason).toBe('disabled');
+    expect(result.semanticStatus).toBe('disabled');
     expect(result.semanticAvailable).toBe(false);
     expect(result.items[0].source).toBe('keyword');
+  });
+
+  it('reports indexing separately and does not spend semantic quota', async () => {
+    ((service as any).getSemanticStatus as jest.Mock).mockResolvedValueOnce(
+      'indexing',
+    );
+    jest.spyOn(service, 'searchPage').mockResolvedValue({
+      items: [searchResult('keyword-page', 0.7)],
+    });
+
+    const result = await service.searchAdvanced(
+      { query: 'runbook', mode: 'hybrid' },
+      { userId: 'user-id', workspaceId: 'workspace-id' },
+    );
+
+    expect(result).toMatchObject({
+      semanticAvailable: false,
+      semanticStatus: 'indexing',
+      fallback: 'keyword',
+      fallbackReason: 'indexing',
+    });
+    expect(
+      searchRateLimitService.assertSemanticSearchAllowed,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized queries before database or provider work', async () => {
+    (environmentService as any).getSearchMaxQueryLength.mockReturnValueOnce(5);
+    const keywordSearch = jest.spyOn(service, 'searchPage');
+
+    await expect(
+      service.searchAdvanced(
+        { query: 'too-long', mode: 'hybrid' },
+        { userId: 'user-id', workspaceId: 'workspace-id' },
+      ),
+    ).rejects.toMatchObject({
+      status: 400,
+    });
+    expect(keywordSearch).not.toHaveBeenCalled();
+    expect(
+      searchRateLimitService.assertSemanticSearchAllowed,
+    ).not.toHaveBeenCalled();
   });
 
   it('deduplicates hybrid results and keeps semantic-only matches', () => {
@@ -188,6 +244,8 @@ describe('SearchService', () => {
     );
 
     expect(result.fallback).toBe('keyword');
+    expect(result.fallbackReason).toBe('provider_unavailable');
+    expect(result.semanticStatus).toBe('degraded');
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'search.semantic_fallback',
@@ -214,6 +272,7 @@ describe('SearchService', () => {
       environmentService,
       dependency,
       pageTreeScopeService as never,
+      searchRateLimitService as never,
     );
 
     await scopedService.searchPage(
@@ -242,7 +301,12 @@ describe('SearchService', () => {
     chunkThresholdQuery.executeTakeFirst.mockResolvedValue(undefined);
     const exactQuery = createQueryBuilder([]);
     exactQuery.as.mockReturnValue(bestChunks);
-    const outerQuery = createQueryBuilder([semanticRow('page-1', 0.91)]);
+    const attachmentMatch = semanticRow('page-1', 0.91, {
+      sourceType: 'attachment',
+      attachmentId: 'attachment-1',
+      attachmentFileName: 'runbook.pdf',
+    });
+    const outerQuery = createQueryBuilder([attachmentMatch]);
     let chunkQueryCount = 0;
     const db = {
       selectFrom: jest.fn((source) => {
@@ -284,6 +348,7 @@ describe('SearchService', () => {
       semanticEnvironment as never,
       embeddingService as never,
       scopeService as never,
+      searchRateLimitService as never,
     );
 
     const result = await (exactService as any).semanticSearchPage(
@@ -314,6 +379,11 @@ describe('SearchService', () => {
     expect(outerQuery.limit).toHaveBeenCalledWith(2);
     expect(outerQuery.offset).toHaveBeenCalledWith(3);
     expect(result).toHaveLength(1);
+    expect(result[0].contentSource).toEqual({
+      type: 'attachment',
+      attachmentId: 'attachment-1',
+      fileName: 'runbook.pdf',
+    });
   });
 
   it.each([
@@ -339,6 +409,7 @@ describe('SearchService', () => {
         } as never,
         dependency,
         pageTreeScopeService as never,
+        searchRateLimitService as never,
       );
 
       await expect(
@@ -399,6 +470,7 @@ describe('SearchService', () => {
         createEmbeddings: jest.fn().mockResolvedValue([[0.1, 0.2, 0.3]]),
       } as never,
       pageTreeScopeService as never,
+      searchRateLimitService as never,
     );
     jest
       .spyOn(annService as never, 'withHnswIterativeScan' as never)
@@ -463,7 +535,11 @@ function createQueryBuilder(rows: unknown[] = []) {
   return query;
 }
 
-function semanticRow(id: string, rank: number) {
+function semanticRow(
+  id: string,
+  rank: number,
+  metadata: Record<string, unknown> = { sourceType: 'page' },
+) {
   return {
     id,
     slugId: id,
@@ -475,6 +551,7 @@ function semanticRow(id: string, rank: number) {
     updatedAt: new Date('2026-01-01T00:00:00Z'),
     rank,
     highlight: `${id} content`,
+    metadata,
     breadcrumbs: [],
     space: { id: 'space-id' },
   };

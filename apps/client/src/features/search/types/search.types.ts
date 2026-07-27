@@ -15,6 +15,9 @@ export interface IPageSearch {
   rank: number;
   highlight: string;
   source?: SearchMode;
+  contentSource?:
+    | { type: "page" }
+    | { type: "attachment"; attachmentId: string; fileName: string };
   scores?: {
     keyword?: number;
     semantic?: number;
@@ -53,6 +56,11 @@ export interface IPageSearchParams {
 }
 
 export type SearchMode = "keyword" | "semantic" | "hybrid";
+export type SemanticSearchStatus =
+  | "disabled"
+  | "indexing"
+  | "ready"
+  | "degraded";
 
 export interface IAdvancedPageSearchParams extends IPageSearchParams {
   mode: SearchMode;
@@ -62,7 +70,9 @@ export interface IAdvancedPageSearchResponse {
   items: IPageSearch[];
   mode: SearchMode;
   semanticAvailable: boolean;
+  semanticStatus: SemanticSearchStatus;
   fallback?: "keyword";
+  fallbackReason?: "disabled" | "indexing" | "provider_unavailable";
 }
 
 export interface IAttachmentSearch {

@@ -12,10 +12,10 @@ describe('EnvironmentService', () => {
     expect(service.isVectorSearchEnabled()).toBe(false);
   });
 
-  it('keeps vector search disabled unless both feature flags are explicit', () => {
+  it('keeps vector search independent from the MCP transport flag', () => {
     expect(
       createService({ VECTOR_SEARCH_ENABLED: 'true' }).isVectorSearchEnabled(),
-    ).toBe(false);
+    ).toBe(true);
     expect(createService({ MCP_ENABLED: 'true' }).isVectorSearchEnabled()).toBe(
       false,
     );
@@ -25,6 +25,14 @@ describe('EnvironmentService', () => {
         VECTOR_SEARCH_ENABLED: 'true',
       }).isVectorSearchEnabled(),
     ).toBe(true);
+  });
+
+  it('uses bounded web vector search defaults', () => {
+    const service = createService();
+
+    expect(service.getSearchMaxQueryLength()).toBe(1000);
+    expect(service.getVectorSearchRateLimitWindowSeconds()).toBe(60);
+    expect(service.getVectorSearchRateLimitMaxRequests()).toBe(60);
   });
 
   it('uses the documented embedding retry and chunk defaults', () => {

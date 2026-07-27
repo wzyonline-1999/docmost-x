@@ -30,6 +30,7 @@ export type McpVectorIndexJobType =
 export type McpVectorIndexJobStatus =
   | 'queued'
   | 'running'
+  | 'waiting'
   | 'paused'
   | 'succeeded'
   | 'failed'
@@ -76,9 +77,8 @@ export type McpVectorBatchIndexResult = {
   jobType: 'space' | 'workspace';
   workspaceId: string;
   spaceId?: string | null;
-  status: 'succeeded' | 'failed' | 'paused' | 'cancelled';
+  status: 'waiting' | 'succeeded' | 'failed' | 'paused' | 'cancelled';
   queuedPageCount: number;
-  pageJobIds: string[];
   scannedPageCount?: number;
   batchCount?: number;
 };
@@ -99,5 +99,5 @@ export type McpVectorIndexStats = Json & {
   scannedPageCount?: number;
   batchCount?: number;
   lastCursor?: string | null;
-  pageJobIds?: string[];
+  childCounts?: Record<string, number>;
 };

@@ -21,6 +21,7 @@ describe('MCP Streamable HTTP SDK compatibility', () => {
   };
   const tokenService = {
     authenticateToken: jest.fn(async () => authenticatedClient),
+    recordSuccessfulUse: jest.fn(async () => undefined),
   };
   const toolService = {
     listTools: jest.fn(() => [
@@ -43,6 +44,9 @@ describe('MCP Streamable HTTP SDK compatibility', () => {
     recordPermissionDenied: jest.fn(),
     recordMutation: jest.fn(),
   };
+  const environmentService = {
+    getMcpMaxBatchSize: jest.fn(() => 20),
+  };
 
   let server: Server;
   let endpoint: URL;
@@ -54,6 +58,7 @@ describe('MCP Streamable HTTP SDK compatibility', () => {
       toolService as unknown as McpToolService,
       rateLimitService as unknown as McpRateLimitService,
       metricsService as never,
+      environmentService as never,
     );
     server = createServer((request, response) => {
       void handleHttpRequest(controller, request, response);
@@ -104,6 +109,7 @@ describe('MCP Streamable HTTP SDK compatibility', () => {
     );
     expect(rateLimitService.assertWithinLimit).toHaveBeenCalledWith(
       authenticatedClient,
+      1,
     );
     expect(metricsService.observeRequest).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -20,6 +20,9 @@ export class SearchResponseDto {
   space: Partial<Space>;
   breadcrumbs: SearchBreadcrumbDto[];
   source?: 'keyword' | 'semantic' | 'hybrid';
+  contentSource?:
+    | { type: 'page' }
+    | { type: 'attachment'; attachmentId: string; fileName: string };
   scores?: {
     keyword?: number;
     semantic?: number;
@@ -28,9 +31,17 @@ export class SearchResponseDto {
   };
 }
 
+export type SemanticSearchStatus =
+  | 'disabled'
+  | 'indexing'
+  | 'ready'
+  | 'degraded';
+
 export class AdvancedSearchResponseDto {
   items: SearchResponseDto[];
   mode: 'keyword' | 'semantic' | 'hybrid';
   semanticAvailable: boolean;
+  semanticStatus: SemanticSearchStatus;
   fallback?: 'keyword';
+  fallbackReason?: 'disabled' | 'indexing' | 'provider_unavailable';
 }

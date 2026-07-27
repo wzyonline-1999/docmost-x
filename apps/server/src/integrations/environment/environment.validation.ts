@@ -7,11 +7,57 @@ import {
   IsString,
   IsUrl,
   MinLength,
+  registerDecorator,
   ValidateIf,
+  ValidationArguments,
   validateSync,
 } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
 import { IsISO6391 } from '../../common/validators/is-iso6391';
+
+function IsNumericStringInRange(
+  min: number,
+  max: number,
+  options: { integer?: boolean } = {},
+): PropertyDecorator {
+  const integer = options.integer ?? true;
+
+  return (target, propertyKey) => {
+    registerDecorator({
+      name: 'isNumericStringInRange',
+      target: target.constructor,
+      propertyName: String(propertyKey),
+      constraints: [min, max, integer],
+      validator: {
+        validate(value: unknown) {
+          if (
+            typeof value !== 'string' ||
+            value.length === 0 ||
+            value.trim() !== value
+          ) {
+            return false;
+          }
+
+          const numericValue = Number(value);
+          return (
+            Number.isFinite(numericValue) &&
+            (!integer || Number.isInteger(numericValue)) &&
+            numericValue >= min &&
+            numericValue <= max
+          );
+        },
+        defaultMessage(args: ValidationArguments) {
+          const [minimum, maximum, mustBeInteger] = args.constraints as [
+            number,
+            number,
+            boolean,
+          ];
+          return `${args.property} must be ${mustBeInteger ? 'an integer' : 'a number'} between ${minimum} and ${maximum}`;
+        },
+      },
+    });
+  };
+}
 
 export class EnvironmentVariables {
   @IsNotEmpty()
@@ -119,23 +165,38 @@ export class EnvironmentVariables {
   MCP_TOKEN_HASH_SECRET: string;
 
   @IsOptional()
+  @MinLength(32)
+  @IsString()
+  MCP_TOKEN_HASH_SECRET_PREVIOUS: string;
+
+  @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(1, 100)
+  MCP_MAX_BATCH_SIZE: string;
+
+  @IsOptional()
+  @IsNumberString()
+  @IsNumericStringInRange(1, 10_000)
   MCP_MAX_QUERY_LENGTH: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(1, 5_000_000)
   MCP_MAX_WRITE_CONTENT_LENGTH: string;
 
   @IsOptional()
   @IsString()
+  @IsNumericStringInRange(0, 1, { integer: false })
   MCP_READ_AUDIT_SAMPLE_RATE: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(1, 3_600)
   MCP_RATE_LIMIT_WINDOW_SECONDS: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(1, 100_000)
   MCP_RATE_LIMIT_MAX_REQUESTS: string;
 
   @IsOptional()
@@ -148,15 +209,11 @@ export class EnvironmentVariables {
   @IsString()
   VECTOR_SEARCH_ENABLED: string;
 
-  @ValidateIf(
-    (obj) => obj.MCP_ENABLED === 'true' && obj.VECTOR_SEARCH_ENABLED === 'true',
-  )
+  @ValidateIf((obj) => obj.VECTOR_SEARCH_ENABLED === 'true')
   @IsUrl({ protocols: ['http', 'https'], require_tld: false })
   EMBEDDING_BASE_URL: string;
 
-  @ValidateIf(
-    (obj) => obj.MCP_ENABLED === 'true' && obj.VECTOR_SEARCH_ENABLED === 'true',
-  )
+  @ValidateIf((obj) => obj.VECTOR_SEARCH_ENABLED === 'true')
   @IsString()
   @IsNotEmpty()
   EMBEDDING_API_KEY: string;
@@ -175,55 +232,87 @@ export class EnvironmentVariables {
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(1, 256)
   EMBEDDING_BATCH_SIZE: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(100, 120_000)
   EMBEDDING_TIMEOUT_MS: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(0, 10)
   EMBEDDING_MAX_RETRIES: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(0, 30_000)
   EMBEDDING_RETRY_BASE_DELAY_MS: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(256, 32_000)
   VECTOR_CHUNK_MAX_CHARS: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(0, 31_999)
   VECTOR_CHUNK_OVERLAP_CHARS: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(0, 1, { integer: false })
   VECTOR_HYBRID_SEMANTIC_WEIGHT: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(0, 1, { integer: false })
   VECTOR_HYBRID_KEYWORD_WEIGHT: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(0, 1, { integer: false })
   VECTOR_HYBRID_RECENCY_WEIGHT: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(1, 100_000)
   VECTOR_EXACT_PAGE_THRESHOLD: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(1, 1_000_000)
   VECTOR_EXACT_CHUNK_THRESHOLD: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(2, 200)
   VECTOR_ANN_CANDIDATE_MULTIPLIER: string;
 
   @IsOptional()
   @IsNumberString()
+  @IsNumericStringInRange(100, 100_000)
   VECTOR_ANN_MAX_CANDIDATES: string;
+
+  @IsOptional()
+  @IsNumberString()
+  @IsNumericStringInRange(1, 10_000)
+  SEARCH_MAX_QUERY_LENGTH: string;
+
+  @IsOptional()
+  @IsNumberString()
+  @IsNumericStringInRange(1, 3_600)
+  VECTOR_SEARCH_RATE_LIMIT_WINDOW_SECONDS: string;
+
+  @IsOptional()
+  @IsNumberString()
+  @IsNumericStringInRange(1, 100_000)
+  VECTOR_SEARCH_RATE_LIMIT_MAX_REQUESTS: string;
+
+  @IsOptional()
+  @IsString()
+  TRUSTED_PROXY_CIDRS: string;
 
   @IsOptional()
   @ValidateIf((obj) => obj.AI_DRIVER)
@@ -295,19 +384,55 @@ export class EnvironmentVariables {
   CLICKHOUSE_URL: string;
 }
 
-export function validate(config: Record<string, any>) {
+function inspectEnvironment(config: Record<string, any>) {
   const validatedConfig = plainToInstance(EnvironmentVariables, config);
-
   const errors = validateSync(validatedConfig);
+  const messages = errors.flatMap((error) =>
+    Object.values(error.constraints ?? {}),
+  );
 
-  if (errors.length > 0) {
+  const chunkMax = Number(config.VECTOR_CHUNK_MAX_CHARS ?? 4_000);
+  const chunkOverlap = Number(config.VECTOR_CHUNK_OVERLAP_CHARS ?? 300);
+  if (
+    Number.isFinite(chunkMax) &&
+    Number.isFinite(chunkOverlap) &&
+    chunkOverlap >= chunkMax
+  ) {
+    messages.push(
+      'VECTOR_CHUNK_OVERLAP_CHARS must be smaller than VECTOR_CHUNK_MAX_CHARS',
+    );
+  }
+
+  const hybridWeights = [
+    Number(config.VECTOR_HYBRID_SEMANTIC_WEIGHT ?? 0.65),
+    Number(config.VECTOR_HYBRID_KEYWORD_WEIGHT ?? 0.25),
+    Number(config.VECTOR_HYBRID_RECENCY_WEIGHT ?? 0.1),
+  ];
+  if (
+    hybridWeights.every(Number.isFinite) &&
+    hybridWeights.reduce((total, value) => total + value, 0) <= 0
+  ) {
+    messages.push('At least one VECTOR_HYBRID_*_WEIGHT must be greater than 0');
+  }
+
+  return { validatedConfig, messages };
+}
+
+export function getEnvironmentValidationMessages(
+  config: Record<string, any>,
+): string[] {
+  return inspectEnvironment(config).messages;
+}
+
+export function validate(config: Record<string, any>) {
+  const { validatedConfig, messages } = inspectEnvironment(config);
+
+  if (messages.length > 0) {
     console.error(
       'The Environment variables has failed the following validations:',
     );
 
-    errors.map((error) => {
-      console.error(JSON.stringify(error.constraints));
-    });
+    messages.forEach((message) => console.error(message));
 
     console.error(
       'Please fix the environment variables and try again. Exiting program...',

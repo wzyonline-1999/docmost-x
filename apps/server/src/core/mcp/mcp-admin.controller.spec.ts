@@ -15,6 +15,9 @@ describe('McpAdminController', () => {
     deleteClient: jest.fn(),
     rotateClientToken: jest.fn(),
     listAuditLogs: jest.fn(),
+    listRepairRecords: jest.fn(),
+    retryRepairRecord: jest.fn(),
+    discardRepairRecord: jest.fn(),
     getPermissionMatrix: jest.fn(),
     bulkUpsertSpacePermissions: jest.fn(),
     upsertSpacePermission: jest.fn(),
@@ -49,6 +52,7 @@ describe('McpAdminController', () => {
       permissions: [],
     });
     adminService.listAuditLogs.mockResolvedValue({ items: [], meta: {} });
+    adminService.listRepairRecords.mockResolvedValue({ items: [], meta: {} });
     adminService.getPermissionMatrix.mockResolvedValue({
       clientId: 'client-1',
       spaces: [],
@@ -134,6 +138,38 @@ describe('McpAdminController', () => {
       'workspace-1',
       adminPrincipal,
       dto,
+    );
+  });
+
+  it('forwards repair-record actions with the current admin principal', async () => {
+    const expectedUpdatedAt = '2026-07-27T08:00:00.000Z';
+    adminService.retryRepairRecord.mockResolvedValueOnce({
+      id: 'record-1',
+      status: 'needs_reconciliation',
+    });
+
+    await expect(
+      controller.retryRepairRecord(
+        { recordId: 'record-1', expectedUpdatedAt },
+        adminUser as unknown as User,
+        workspace as unknown as Workspace,
+      ),
+    ).resolves.toMatchObject({ status: 'needs_reconciliation' });
+    expect(adminService.retryRepairRecord).toHaveBeenCalledWith(
+      'workspace-1',
+      adminPrincipal,
+      { recordId: 'record-1', expectedUpdatedAt },
+    );
+
+    await controller.discardRepairRecord(
+      { recordId: 'record-1', expectedUpdatedAt, confirm: true },
+      adminUser as unknown as User,
+      workspace as unknown as Workspace,
+    );
+    expect(adminService.discardRepairRecord).toHaveBeenCalledWith(
+      'workspace-1',
+      adminPrincipal,
+      { recordId: 'record-1', expectedUpdatedAt, confirm: true },
     );
   });
 
@@ -259,6 +295,43 @@ describe('McpAdminController', () => {
           workspace as unknown as Workspace,
         ),
       adminService.listAuditLogs,
+    ],
+    [
+      'list repair records',
+      () =>
+        controller.listRepairRecords(
+          { limit: 20 } as never,
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.listRepairRecords,
+    ],
+    [
+      'retry repair record',
+      () =>
+        controller.retryRepairRecord(
+          {
+            recordId: 'record-1',
+            expectedUpdatedAt: '2026-07-27T08:00:00.000Z',
+          },
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.retryRepairRecord,
+    ],
+    [
+      'discard repair record',
+      () =>
+        controller.discardRepairRecord(
+          {
+            recordId: 'record-1',
+            expectedUpdatedAt: '2026-07-27T08:00:00.000Z',
+            confirm: true,
+          },
+          adminUser as unknown as User,
+          workspace as unknown as Workspace,
+        ),
+      adminService.discardRepairRecord,
     ],
     [
       'get permission matrix',

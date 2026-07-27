@@ -7,15 +7,21 @@ import { WorkspaceModule } from '../workspace/workspace.module';
 import { AttachmentProcessor } from './processors/attachment.processor';
 import { TokenModule } from '../auth/token.module';
 import { AttachmentContentIndexService } from './services/attachment-content-index.service';
+import { AttachmentLifecycleService } from './services/attachment-lifecycle.service';
 
 @Module({
   imports: [StorageModule, UserModule, WorkspaceModule, TokenModule],
   controllers: [AttachmentController],
   providers: [
     AttachmentContentIndexService,
+    AttachmentLifecycleService,
     AttachmentService,
     AttachmentProcessor,
   ],
-  exports: [AttachmentContentIndexService, AttachmentService],
+  exports: [
+    AttachmentContentIndexService,
+    AttachmentLifecycleService,
+    AttachmentService,
+  ],
 })
 export class AttachmentModule {}

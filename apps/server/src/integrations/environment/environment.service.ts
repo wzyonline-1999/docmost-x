@@ -293,6 +293,20 @@ export class EnvironmentService {
     return this.configService.get<string>('MCP_TOKEN_HASH_SECRET');
   }
 
+  getMcpTokenHashPreviousSecret(): string | undefined {
+    const value = this.configService
+      .get<string>('MCP_TOKEN_HASH_SECRET_PREVIOUS')
+      ?.trim();
+    return value || undefined;
+  }
+
+  getMcpMaxBatchSize(): number {
+    return parseInt(
+      this.configService.get<string>('MCP_MAX_BATCH_SIZE', '20'),
+      10,
+    );
+  }
+
   getMcpMaxQueryLength(): number {
     return parseInt(
       this.configService.get<string>('MCP_MAX_QUERY_LENGTH', '1000'),
@@ -333,7 +347,6 @@ export class EnvironmentService {
 
   isVectorSearchEnabled(): boolean {
     return (
-      this.isMcpEnabled() &&
       this.configService
         .get<string>('VECTOR_SEARCH_ENABLED', 'false')
         .toLowerCase() === 'true'
@@ -452,6 +465,33 @@ export class EnvironmentService {
   getVectorAnnMaxCandidates(): number {
     return parseInt(
       this.configService.get<string>('VECTOR_ANN_MAX_CANDIDATES', '5000'),
+      10,
+    );
+  }
+
+  getSearchMaxQueryLength(): number {
+    return parseInt(
+      this.configService.get<string>('SEARCH_MAX_QUERY_LENGTH', '1000'),
+      10,
+    );
+  }
+
+  getVectorSearchRateLimitWindowSeconds(): number {
+    return parseInt(
+      this.configService.get<string>(
+        'VECTOR_SEARCH_RATE_LIMIT_WINDOW_SECONDS',
+        '60',
+      ),
+      10,
+    );
+  }
+
+  getVectorSearchRateLimitMaxRequests(): number {
+    return parseInt(
+      this.configService.get<string>(
+        'VECTOR_SEARCH_RATE_LIMIT_MAX_REQUESTS',
+        '60',
+      ),
       10,
     );
   }

@@ -11,7 +11,7 @@ groups:
           description: At least one MCP audit write failed in the last five minutes.
 
       - alert: DocmostMcpIndexQueueBacklog
-        expr: docmost_mcp_index_jobs{status="queued"} > 100
+        expr: max(docmost_mcp_index_jobs{status="queued"}) > 100
         for: 10m
         labels:
           severity: warning
@@ -20,7 +20,7 @@ groups:
           description: More than 100 vector jobs have remained queued for ten minutes.
 
       - alert: DocmostMcpIndexJobStuck
-        expr: docmost_mcp_index_oldest_job_age_seconds{status="running"} > 900
+        expr: max(docmost_mcp_index_oldest_job_age_seconds{status="running"}) > 900
         for: 5m
         labels:
           severity: critical
@@ -29,7 +29,7 @@ groups:
           description: A vector job has been running for more than fifteen minutes.
 
       - alert: DocmostMcpIndexFailuresPresent
-        expr: docmost_mcp_index_jobs{status="failed"} > 0
+        expr: max(docmost_mcp_index_jobs{status="failed"}) > 0
         for: 10m
         labels:
           severity: warning
@@ -56,10 +56,19 @@ groups:
           description: MCP is receiving more than one unauthorized request per second.
 
       - alert: DocmostMcpReconciliationRequired
-        expr: sum(docmost_mcp_idempotency_records{status=~"needs_reconciliation|repair_required"}) > 0
+        expr: sum(max by (status) (docmost_mcp_idempotency_records{status=~"needs_reconciliation|repair_required"})) > 0
         for: 10m
         labels:
           severity: warning
         annotations:
           summary: Docmost MCP write recovery requires attention
           description: At least one idempotent write has not converged automatically.
+
+      - alert: DocmostMcpPersistentMetricsStale
+        expr: time() - max(docmost_mcp_persistent_snapshot_timestamp_seconds) > 60
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Docmost MCP persistent metrics snapshot is stale
+          description: No application replica has refreshed the shared persistent-state metrics snapshot for more than one minute.

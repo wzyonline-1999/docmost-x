@@ -12,6 +12,11 @@ import { McpToolService } from './mcp-tool.service';
 import type { McpToolContext } from '../types/mcp-tool.types';
 
 describe('McpToolService', () => {
+  const anotherPageId = '33333333-3333-4333-8333-333333333333';
+  const allowedSpaceId = '44444444-4444-4444-8444-444444444444';
+  const deniedSpaceId = '55555555-5555-4555-8555-555555555555';
+  const indexJobId = '66666666-6666-4666-8666-666666666666';
+  const idempotencyKey = 'mcp-tool-test-operation';
   const actor = {
     id: 'user-1',
     workspaceId: 'workspace-1',
@@ -182,6 +187,77 @@ describe('McpToolService', () => {
         ?.inputSchema.properties,
     ).toHaveProperty('rootPageId');
   });
+
+  it('advertises the same strict write requirements enforced at runtime', () => {
+    const service = createService();
+    const definitions = new Map(
+      service.listTools().map((definition) => [definition.name, definition]),
+    );
+
+    expect(definitions.get('create_page')?.inputSchema.required).toEqual(
+      expect.arrayContaining(['spaceId', 'title', 'idempotencyKey']),
+    );
+    expect(definitions.get('update_page')?.inputSchema.required).toEqual(
+      expect.arrayContaining(['pageId', 'expectedUpdatedAt', 'idempotencyKey']),
+    );
+    expect(definitions.get('append_page')?.inputSchema.required).toEqual(
+      expect.arrayContaining([
+        'pageId',
+        'content',
+        'expectedUpdatedAt',
+        'idempotencyKey',
+      ]),
+    );
+  });
+
+  it.each([
+    [
+      {
+        name: 'get_page',
+        arguments: { pageId: 'not-a-uuid' },
+      },
+      '/pageId must match format "uuid"',
+    ],
+    [
+      {
+        name: 'get_page',
+        arguments: { pageId: page.id, unexpected: true },
+      },
+      'must NOT have additional properties',
+    ],
+    [
+      {
+        name: 'create_page',
+        arguments: {
+          spaceId: page.spaceId,
+          title: 'Too long key',
+          idempotencyKey: 'x'.repeat(201),
+        },
+      },
+      '/idempotencyKey must NOT have more than 200 characters',
+    ],
+    [
+      {
+        name: 'search_docs',
+        arguments: {
+          query: 'scope',
+          spaceIds: Array.from(
+            { length: 101 },
+            (_, index) =>
+              `${String(index).padStart(8, '0')}-0000-4000-8000-000000000000`,
+          ),
+        },
+      },
+      '/spaceIds must NOT have more than 100 items',
+    ],
+  ])(
+    'rejects tool arguments outside the advertised schema',
+    async (params, message) => {
+      const service = createService();
+
+      await expect(service.callTool(params, context)).rejects.toThrow(message);
+    },
+  );
 
   it('reports only effective permissions when listing spaces', async () => {
     const configuredRows = [
@@ -442,10 +518,13 @@ describe('McpToolService', () => {
 
     await expect(
       service.callTool(
-        { name: 'delete_page', arguments: { pageId: 'page-1' } },
+        {
+          name: 'delete_page',
+          arguments: { pageId: page.id, idempotencyKey },
+        },
         context,
       ),
-    ).rejects.toThrow('delete_page requires confirm=true');
+    ).rejects.toThrow("required property 'confirm'");
   });
 
   it('preserves page reads for an actor with native access', async () => {
@@ -560,7 +639,7 @@ describe('McpToolService', () => {
         },
         context,
       ),
-    ).rejects.toThrow('format must be markdown, html, or json');
+    ).rejects.toThrow('/format must be equal to one of the allowed values');
   });
 
   it('masks deleted pages as not found without returning content', async () => {
@@ -618,19 +697,29 @@ describe('McpToolService', () => {
   it.each([
     {
       name: 'update_page',
-      arguments: { pageId: page.id, title: 'Blocked update' },
+      arguments: {
+        pageId: page.id,
+        title: 'Blocked update',
+        expectedUpdatedAt: page.updatedAt.toISOString(),
+        idempotencyKey,
+      },
     },
     {
       name: 'append_page',
-      arguments: { pageId: page.id, content: 'Blocked append' },
+      arguments: {
+        pageId: page.id,
+        content: 'Blocked append',
+        expectedUpdatedAt: page.updatedAt.toISOString(),
+        idempotencyKey,
+      },
     },
     {
       name: 'delete_page',
-      arguments: { pageId: page.id, confirm: true },
+      arguments: { pageId: page.id, confirm: true, idempotencyKey },
     },
     {
       name: 'restore_page',
-      arguments: { pageId: page.id, confirm: true },
+      arguments: { pageId: page.id, confirm: true, idempotencyKey },
     },
   ])(
     'checks MCP $name permission before resolving the actor',
@@ -674,11 +763,16 @@ describe('McpToolService', () => {
   it.each([
     {
       name: 'update_page',
-      arguments: { pageId: page.id, title: 'Denied update' },
+      arguments: {
+        pageId: page.id,
+        title: 'Denied update',
+        expectedUpdatedAt: page.updatedAt.toISOString(),
+        idempotencyKey,
+      },
     },
     {
       name: 'delete_page',
-      arguments: { pageId: page.id, confirm: true },
+      arguments: { pageId: page.id, confirm: true, idempotencyKey },
     },
   ])('blocks $name when the actor lacks native edit access', async (params) => {
     const permissionService = {
@@ -872,6 +966,7 @@ describe('McpToolService', () => {
           spaceId: page.spaceId,
           title: page.title,
           content: 'content-that-must-not-enter-audit',
+          idempotencyKey,
         },
       },
       context,
@@ -970,6 +1065,8 @@ describe('McpToolService', () => {
           pageId: page.id,
           heading: 'Audit notes',
           content: 'append-secret-body',
+          expectedUpdatedAt: page.updatedAt.toISOString(),
+          idempotencyKey,
         },
       },
       context,
@@ -1052,6 +1149,7 @@ describe('McpToolService', () => {
           pageId: page.id,
           confirm: true,
           reason: 'test cleanup',
+          idempotencyKey,
         },
       },
       context,
@@ -1130,6 +1228,7 @@ describe('McpToolService', () => {
           pageId: page.id,
           confirm: true,
           reason: 'undo test cleanup',
+          idempotencyKey,
         },
       },
       context,
@@ -1179,17 +1278,18 @@ describe('McpToolService', () => {
             pageId: page.id,
             title: 'Blocked update',
             expectedUpdatedAt: 'not-a-date',
+            idempotencyKey,
           },
         },
         context,
       ),
-    ).rejects.toThrow('expectedUpdatedAt must be a valid date');
+    ).rejects.toThrow('/expectedUpdatedAt must match format "date-time"');
     expect(idempotencyService.run).not.toHaveBeenCalled();
   });
 
   it.each([
-    [null, 'content must be a string or object'],
-    [[], 'content must be a string or object'],
+    [null, '/content must be string,object'],
+    [[], '/content must be string,object'],
     ['too-long', 'content is too long'],
   ])(
     'rejects invalid create content %p before idempotent execution',
@@ -1227,6 +1327,7 @@ describe('McpToolService', () => {
               spaceId: page.spaceId,
               title: 'Invalid content',
               content,
+              idempotencyKey,
             },
           },
           context,
@@ -1237,11 +1338,11 @@ describe('McpToolService', () => {
   );
 
   it.each([
-    [{ content: null }, 'content must be a string or object'],
-    [{ content: [] }, 'content must be a string or object'],
+    [{ content: null }, '/content must be string,object'],
+    [{ content: [] }, '/content must be string,object'],
     [
       { content: 'valid', format: 'xml' },
-      'format must be markdown, html, or json',
+      '/format must be equal to one of the allowed values',
     ],
   ])(
     'rejects invalid update input %p before idempotent execution',
@@ -1273,7 +1374,12 @@ describe('McpToolService', () => {
         service.callTool(
           {
             name: 'update_page',
-            arguments: { pageId: page.id, ...patch },
+            arguments: {
+              pageId: page.id,
+              expectedUpdatedAt: page.updatedAt.toISOString(),
+              idempotencyKey,
+              ...patch,
+            },
           },
           context,
         ),
@@ -1316,11 +1422,12 @@ describe('McpToolService', () => {
             title: 'Invalid format',
             content: 'content',
             format: 'xml',
+            idempotencyKey,
           },
         },
         context,
       ),
-    ).rejects.toThrow('format must be markdown, html, or json');
+    ).rejects.toThrow('/format must be equal to one of the allowed values');
     expect(idempotencyService.run).not.toHaveBeenCalled();
   });
 
@@ -1364,8 +1471,9 @@ describe('McpToolService', () => {
             name: 'create_page',
             arguments: {
               spaceId: page.spaceId,
-              parentPageId: 'parent-page',
+              parentPageId: anotherPageId,
               title: 'Child',
+              idempotencyKey,
             },
           },
           context,
@@ -1647,11 +1755,11 @@ describe('McpToolService', () => {
 
   it('filters mixed search scopes and safely accepts special-character queries', async () => {
     const permissionService = {
-      getAllowedSpaceIds: jest.fn().mockResolvedValue(['space-allowed']),
+      getAllowedSpaceIds: jest.fn().mockResolvedValue([allowedSpaceId]),
     };
     const actorAccessService = {
       requireActor: jest.fn().mockResolvedValue(actor),
-      filterReadableSpaceIds: jest.fn().mockResolvedValue(['space-allowed']),
+      filterReadableSpaceIds: jest.fn().mockResolvedValue([allowedSpaceId]),
       filterReadablePageIds: jest.fn().mockResolvedValue(['allowed-page']),
     };
     const environmentService = {
@@ -1677,7 +1785,7 @@ describe('McpToolService', () => {
       .mockResolvedValue([
         {
           pageId: 'allowed-page',
-          spaceId: 'space-allowed',
+          spaceId: allowedSpaceId,
           title: 'Allowed result',
           snippet: 'Allowed content',
           updatedAt: new Date(),
@@ -1686,7 +1794,7 @@ describe('McpToolService', () => {
         },
         {
           pageId: 'denied-page',
-          spaceId: 'space-denied',
+          spaceId: deniedSpaceId,
           title: 'Workspace B secret title',
           snippet: 'Workspace B secret content',
           updatedAt: new Date(),
@@ -1702,7 +1810,7 @@ describe('McpToolService', () => {
         arguments: {
           mode: 'keyword',
           query,
-          spaceIds: ['space-allowed', 'space-denied'],
+          spaceIds: [allowedSpaceId, deniedSpaceId],
         },
       },
       context,
@@ -1711,11 +1819,11 @@ describe('McpToolService', () => {
     expect(permissionService.getAllowedSpaceIds).toHaveBeenCalledWith(
       context.client,
       'search',
-      ['space-allowed', 'space-denied'],
+      [allowedSpaceId, deniedSpaceId],
     );
     expect(keywordSearch).toHaveBeenCalledWith(
       context.client.workspaceId,
-      ['space-allowed'],
+      [allowedSpaceId],
       query,
       10,
       actor,
@@ -1910,7 +2018,7 @@ describe('McpToolService', () => {
           },
           context,
         ),
-      ).rejects.toThrow('rootPageId must be a non-empty UUID');
+      ).rejects.toThrow('/rootPageId');
       expect(
         pageTreeScopeService.resolveReadableSubtree,
       ).not.toHaveBeenCalled();
@@ -2107,7 +2215,11 @@ describe('McpToolService', () => {
       service.callTool(
         {
           name: 'retry_index_job',
-          arguments: { jobId: 'workspace-b-job', confirm: true },
+          arguments: {
+            jobId: indexJobId,
+            confirm: true,
+            idempotencyKey,
+          },
         },
         context,
       ),
@@ -2122,9 +2234,12 @@ describe('McpToolService', () => {
   });
 
   it.each([
-    { name: 'reindex_page', arguments: { pageId: 'workspace-b-page' } },
-    { name: 'get_index_status', arguments: { pageId: 'workspace-b-page' } },
-    { name: 'list_index_jobs', arguments: { pageId: 'workspace-b-page' } },
+    {
+      name: 'reindex_page',
+      arguments: { pageId: anotherPageId, idempotencyKey },
+    },
+    { name: 'get_index_status', arguments: { pageId: anotherPageId } },
+    { name: 'list_index_jobs', arguments: { pageId: anotherPageId } },
   ])('masks cross-workspace targets for $name', async (params) => {
     const permissionService = {
       assertPagePermission: jest
@@ -2147,9 +2262,9 @@ describe('McpToolService', () => {
 
   it('does not retry an index job after its space permission is denied', async () => {
     const job = {
-      id: 'job-1',
+      id: indexJobId,
       workspaceId: context.client.workspaceId,
-      spaceId: 'space-denied',
+      spaceId: deniedSpaceId,
       pageId: null,
       jobType: 'space',
       status: 'failed',
@@ -2179,7 +2294,11 @@ describe('McpToolService', () => {
       service.callTool(
         {
           name: 'retry_index_job',
-          arguments: { jobId: job.id, confirm: true },
+          arguments: {
+            jobId: job.id,
+            confirm: true,
+            idempotencyKey,
+          },
         },
         context,
       ),
@@ -2210,7 +2329,7 @@ describe('McpToolService', () => {
       service.callTool(
         {
           name: 'reindex_workspace',
-          arguments: { confirm: true },
+          arguments: { confirm: true, idempotencyKey },
         },
         context,
       ),
@@ -2238,7 +2357,11 @@ describe('McpToolService', () => {
       service.callTool(
         {
           name: 'reindex_space',
-          arguments: { spaceId: 'space-denied', confirm: true },
+          arguments: {
+            spaceId: deniedSpaceId,
+            confirm: true,
+            idempotencyKey,
+          },
         },
         context,
       ),
@@ -2249,23 +2372,37 @@ describe('McpToolService', () => {
   it.each([
     {
       name: 'create_page',
-      arguments: { spaceId: page.spaceId, title: 'Blocked create' },
+      arguments: {
+        spaceId: page.spaceId,
+        title: 'Blocked create',
+        idempotencyKey,
+      },
     },
     {
       name: 'update_page',
-      arguments: { pageId: page.id, title: 'Blocked update' },
+      arguments: {
+        pageId: page.id,
+        title: 'Blocked update',
+        expectedUpdatedAt: page.updatedAt.toISOString(),
+        idempotencyKey,
+      },
     },
     {
       name: 'append_page',
-      arguments: { pageId: page.id, content: 'Blocked append' },
+      arguments: {
+        pageId: page.id,
+        content: 'Blocked append',
+        expectedUpdatedAt: page.updatedAt.toISOString(),
+        idempotencyKey,
+      },
     },
     {
       name: 'delete_page',
-      arguments: { pageId: page.id, confirm: true },
+      arguments: { pageId: page.id, confirm: true, idempotencyKey },
     },
     {
       name: 'restore_page',
-      arguments: { pageId: page.id, confirm: true },
+      arguments: { pageId: page.id, confirm: true, idempotencyKey },
     },
   ])('blocks $name when the actor is unavailable', async (params) => {
     const permissionService = {
@@ -2312,7 +2449,10 @@ describe('McpToolService', () => {
   });
 
   it.each([
-    [{ query: 'anything', mode: 'invalid' }, 'mode must be hybrid'],
+    [
+      { query: 'anything', mode: 'invalid' },
+      '/mode must be equal to one of the allowed values',
+    ],
     [{ query: '   ', mode: 'keyword' }, 'query is required'],
     [{ query: 'too-long', mode: 'keyword' }, 'query is too long'],
   ])(

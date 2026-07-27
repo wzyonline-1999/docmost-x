@@ -74,6 +74,8 @@ export interface IMcpClient {
   actorUserId: string | null;
   createdById: string | null;
   ownerUserId: string | null;
+  actorUserName?: string | null;
+  ownerUserName?: string | null;
   scope: McpClientScope;
   capabilities: {
     canEdit: boolean;

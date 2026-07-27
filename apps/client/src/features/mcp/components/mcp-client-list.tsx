@@ -27,10 +27,9 @@ import {
   IconUserOff,
 } from "@tabler/icons-react";
 import { modals } from "@mantine/modals";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useDebouncedValue } from "@mantine/hooks";
 import { useTranslation } from "react-i18next";
-import { useWorkspaceMembersQuery } from "@/features/workspace/queries/workspace-query";
 import {
   useDeleteMcpClientMutation,
   useDisableMcpClientMutation,
@@ -72,20 +71,10 @@ export function McpClientList({
     cursor,
     limit: 25,
   });
-  const membersQuery = useWorkspaceMembersQuery({ limit: 100 });
   const disableMutation = useDisableMcpClientMutation();
   const deleteMutation = useDeleteMcpClientMutation();
   const rotateMutation = useRotateMcpClientTokenMutation();
   const updateMutation = useUpdateMcpClientMutation();
-  const actors = useMemo(
-    () =>
-      new Map(
-        membersQuery.data?.items.map((member) => [member.id, member.name]) ??
-          [],
-      ),
-    [membersQuery.data],
-  );
-
   const confirmDisable = (client: IMcpClient) => {
     modals.openConfirmModal({
       title: t("Disable access client"),
@@ -238,7 +227,7 @@ export function McpClientList({
                             : `${t("Personal client")}${
                                 client.ownerUserId
                                   ? ` ${t("owned by")} ${
-                                      actors.get(client.ownerUserId) ??
+                                      client.ownerUserName ??
                                       t("unknown member")
                                     }`
                                   : ""
@@ -253,8 +242,7 @@ export function McpClientList({
                       <Table.Td>
                         <Text size="sm" lineClamp={1}>
                           {client.actorUserId
-                            ? (actors.get(client.actorUserId) ??
-                              t("Unknown member"))
+                            ? (client.actorUserName ?? t("Unknown member"))
                             : t("Not assigned")}
                         </Text>
                       </Table.Td>

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type { KyselyDB } from '@docmost/db/types/kysely.types';
 import type { EnvironmentService } from '../../../integrations/environment/environment.service';
+import type { RedisService } from '@nestjs-labs/nestjs-ioredis';
 import { McpTokenService } from './mcp-token.service';
 
 describe('McpTokenService', () => {
@@ -33,6 +34,14 @@ describe('McpTokenService', () => {
   const environmentService = {
     isMcpEnabled: jest.fn(() => true),
     getMcpTokenHashSecret: jest.fn(() => 'test-hash-secret'),
+    getMcpTokenHashPreviousSecret: jest.fn(() => undefined),
+  };
+  const redis = {
+    set: jest.fn(),
+    del: jest.fn(),
+  };
+  const redisService = {
+    getOrThrow: jest.fn(() => redis),
   };
 
   let service: McpTokenService;
@@ -44,10 +53,14 @@ describe('McpTokenService', () => {
     environmentService.getMcpTokenHashSecret.mockReturnValue(
       'test-hash-secret',
     );
+    environmentService.getMcpTokenHashPreviousSecret.mockReturnValue(undefined);
+    redis.set.mockResolvedValue('OK');
+    redis.del.mockResolvedValue(1);
     updateQuery.execute.mockResolvedValue(undefined);
     service = new McpTokenService(
       db as unknown as KyselyDB,
       environmentService as unknown as EnvironmentService,
+      redisService as unknown as RedisService,
     );
     client = {
       id: 'client-1',
@@ -195,7 +208,7 @@ describe('McpTokenService', () => {
       'Invalid MCP token',
     );
 
-    expect(updateQuery.execute).toHaveBeenCalledTimes(1);
+    expect(updateQuery.execute).not.toHaveBeenCalled();
   });
 
   it('rejects the old token immediately after rotation and accepts only the new token', async () => {
@@ -258,26 +271,60 @@ describe('McpTokenService', () => {
     expect(JSON.stringify(warn.mock.calls)).not.toContain('secret-token');
   });
 
-  it('authenticates an active client and contains last-used update failures', async () => {
+  it('authenticates an active client without writing its usage row', async () => {
     await expect(service.authenticateToken(knownToken)).resolves.toBe(client);
+    expect(db.updateTable).not.toHaveBeenCalled();
+    expect(redis.set).not.toHaveBeenCalled();
+  });
+
+  it('records successful usage at most once per throttle window', async () => {
+    redis.set.mockResolvedValueOnce('OK').mockResolvedValueOnce(null);
+
+    await service.recordSuccessfulUse(String(client.id));
+    await service.recordSuccessfulUse(String(client.id));
+
     expect(updateQuery.set).toHaveBeenCalledWith(
       expect.objectContaining({
         lastUsedAt: expect.any(Date),
         updatedAt: expect.any(Date),
       }),
     );
+    expect(updateQuery.execute).toHaveBeenCalledTimes(1);
+  });
 
+  it('contains last-used update failures and releases the throttle key', async () => {
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
     updateQuery.execute.mockRejectedValueOnce(
       new Error('database password secret-token should not escape'),
     );
-    await expect(service.authenticateToken(knownToken)).resolves.toBe(client);
+    await expect(
+      service.recordSuccessfulUse(String(client.id)),
+    ).resolves.toBeUndefined();
+    expect(redis.del).toHaveBeenCalledWith(
+      `docmost:mcp:last-used:${String(client.id)}`,
+    );
     expect(warn).toHaveBeenCalledWith({
       event: 'mcp.token.touch_last_used_failed',
       clientId: client.id,
       errorType: 'Error',
     });
     expect(JSON.stringify(warn.mock.calls)).not.toContain('secret-token');
+  });
+
+  it('accepts a previous hash secret and transparently rehashes the row', async () => {
+    environmentService.getMcpTokenHashPreviousSecret.mockReturnValue(
+      'previous-hash-secret',
+    );
+    client.tokenHash = service.hashToken(knownToken, 'previous-hash-secret');
+    selectQuery.executeTakeFirst.mockResolvedValueOnce(client);
+
+    await expect(service.authenticateToken(knownToken)).resolves.toMatchObject({
+      id: client.id,
+      tokenHash: service.hashToken(knownToken),
+    });
+    expect(updateQuery.set).toHaveBeenCalledWith(
+      expect.objectContaining({ tokenHash: service.hashToken(knownToken) }),
+    );
   });
 
   it('disables only the requested client in its workspace', async () => {

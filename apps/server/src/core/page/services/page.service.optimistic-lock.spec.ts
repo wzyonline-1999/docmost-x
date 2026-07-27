@@ -64,7 +64,10 @@ describe('PageService optimistic locking', () => {
     };
     const collaborationGateway = {
       handleYjsEvent: options.collaborationError
-        ? jest.fn().mockRejectedValue(options.collaborationError)
+        ? jest
+            .fn()
+            .mockRejectedValueOnce(options.collaborationError)
+            .mockResolvedValue(undefined)
         : jest.fn().mockResolvedValue(undefined),
     };
     const service = new PageService(

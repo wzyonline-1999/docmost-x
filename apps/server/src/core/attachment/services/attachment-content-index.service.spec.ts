@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import * as mammoth from 'mammoth';
-import { extractText as extractPdfText } from 'unpdf';
+import { extractText as extractPdfText, getDocumentProxy } from 'unpdf';
 import { EventName } from '../../../common/events/event.contants';
 import { AttachmentType } from '../attachment.constants';
 import {
@@ -10,7 +10,10 @@ import {
 } from './attachment-content-index.service';
 
 jest.mock('mammoth', () => ({ extractRawText: jest.fn() }));
-jest.mock('unpdf', () => ({ extractText: jest.fn() }));
+jest.mock('unpdf', () => ({
+  extractText: jest.fn(),
+  getDocumentProxy: jest.fn(),
+}));
 
 describe('AttachmentContentIndexService', () => {
   const attachment = {
@@ -30,6 +33,16 @@ describe('AttachmentContentIndexService', () => {
     createdAt: new Date('2026-07-12T00:00:00.000Z'),
     updatedAt: new Date('2026-07-12T00:00:00.000Z'),
     deletedAt: null,
+    contentIndexStatus: 'pending',
+    contentIndexAttemptCount: 0,
+    contentIndexError: null,
+    contentIndexedAt: null,
+    contentIndexLeaseOwner: null,
+    contentIndexLeaseExpiresAt: null,
+    deletionStatus: 'active',
+    deletionAttemptCount: 0,
+    deletionError: null,
+    deletionStartedAt: null,
   };
 
   const createHarness = (overrides = {}) => {
@@ -44,12 +57,37 @@ describe('AttachmentContentIndexService', () => {
         .mockResolvedValue(Buffer.from('hello\r\n\r\n\r\nworld\0')),
     };
     const eventEmitter = { emit: jest.fn() };
+    const updateQuery = {
+      set: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      returning: jest.fn().mockReturnThis(),
+      returningAll: jest.fn().mockReturnThis(),
+      execute: jest.fn().mockResolvedValue(undefined),
+      executeTakeFirst: jest
+        .fn()
+        .mockResolvedValueOnce({
+          ...current,
+          contentIndexStatus: 'indexing',
+          contentIndexAttemptCount: 1,
+        })
+        .mockResolvedValue({ id: current.id }),
+    };
+    const db = {
+      updateTable: jest.fn(() => updateQuery),
+    };
     const service = new AttachmentContentIndexService(
       attachmentRepo as never,
       storageService as never,
       eventEmitter as never,
+      db as never,
     );
-    return { service, attachmentRepo, storageService, eventEmitter };
+    return {
+      service,
+      attachmentRepo,
+      storageService,
+      eventEmitter,
+      updateQuery,
+    };
   };
 
   beforeEach(() => jest.clearAllMocks());
@@ -67,9 +105,11 @@ describe('AttachmentContentIndexService', () => {
         truncated: false,
       }),
     );
-    expect(harness.attachmentRepo.updateAttachment).toHaveBeenCalledWith(
-      expect.objectContaining({ textContent: 'hello\n\nworld' }),
-      attachment.id,
+    expect(harness.updateQuery.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        textContent: 'hello\n\nworld',
+        contentIndexStatus: 'indexed',
+      }),
     );
     expect(harness.eventEmitter.emit).toHaveBeenCalledWith(
       EventName.ATTACHMENT_CONTENT_UPDATED,
@@ -86,20 +126,27 @@ describe('AttachmentContentIndexService', () => {
     jest
       .mocked(mammoth.extractRawText)
       .mockResolvedValue({ value: 'docx text', messages: [] });
+    jest
+      .spyOn(harness.service as any, 'validateDocxArchive')
+      .mockResolvedValue(undefined);
 
     await harness.service.indexAttachmentContent(attachment.id);
 
     expect(mammoth.extractRawText).toHaveBeenCalledWith({
       buffer: expect.any(Buffer),
     });
-    expect(harness.attachmentRepo.updateAttachment).toHaveBeenCalledWith(
+    expect(harness.updateQuery.set).toHaveBeenCalledWith(
       expect.objectContaining({ textContent: 'docx text' }),
-      attachment.id,
     );
   });
 
   it('uses unpdf for pdf attachments', async () => {
     const harness = createHarness({ fileExt: '.pdf' });
+    const destroy = jest.fn().mockResolvedValue(undefined);
+    jest.mocked(getDocumentProxy).mockResolvedValue({
+      numPages: 1,
+      destroy,
+    } as never);
     jest.mocked(extractPdfText).mockResolvedValue({
       text: 'pdf text',
       totalPages: 1,
@@ -107,13 +154,16 @@ describe('AttachmentContentIndexService', () => {
 
     await harness.service.indexAttachmentContent(attachment.id);
 
-    expect(extractPdfText).toHaveBeenCalledWith(expect.any(Uint8Array), {
-      mergePages: true,
-    });
-    expect(harness.attachmentRepo.updateAttachment).toHaveBeenCalledWith(
-      expect.objectContaining({ textContent: 'pdf text' }),
-      attachment.id,
+    expect(extractPdfText).toHaveBeenCalledWith(
+      expect.objectContaining({ numPages: 1 }),
+      {
+        mergePages: true,
+      },
     );
+    expect(harness.updateQuery.set).toHaveBeenCalledWith(
+      expect.objectContaining({ textContent: 'pdf text' }),
+    );
+    expect(destroy).toHaveBeenCalled();
   });
 
   it('does not rewrite or emit when extracted text is unchanged', async () => {
@@ -123,7 +173,12 @@ describe('AttachmentContentIndexService', () => {
     await expect(
       harness.service.indexAttachmentContent(attachment.id),
     ).resolves.toEqual(expect.objectContaining({ changed: false }));
-    expect(harness.attachmentRepo.updateAttachment).not.toHaveBeenCalled();
+    expect(harness.updateQuery.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        textContent: 'same',
+        contentIndexStatus: 'indexed',
+      }),
+    );
     expect(harness.eventEmitter.emit).not.toHaveBeenCalled();
   });
 
@@ -142,11 +197,10 @@ describe('AttachmentContentIndexService', () => {
         truncated: true,
       }),
     );
-    expect(harness.attachmentRepo.updateAttachment).toHaveBeenCalledWith(
+    expect(harness.updateQuery.set).toHaveBeenCalledWith(
       expect.objectContaining({
         textContent: 'x'.repeat(MAX_ATTACHMENT_INDEX_CHARS),
       }),
-      attachment.id,
     );
   });
 
@@ -163,9 +217,8 @@ describe('AttachmentContentIndexService', () => {
         truncated: false,
       }),
     );
-    expect(harness.attachmentRepo.updateAttachment).toHaveBeenCalledWith(
+    expect(harness.updateQuery.set).toHaveBeenCalledWith(
       expect.objectContaining({ textContent: null }),
-      attachment.id,
     );
     expect(harness.eventEmitter.emit).toHaveBeenCalledWith(
       EventName.ATTACHMENT_CONTENT_UPDATED,
@@ -179,6 +232,9 @@ describe('AttachmentContentIndexService', () => {
 
   it('skips missing and unsupported attachments without reading storage', async () => {
     const missing = createHarness();
+    missing.updateQuery.executeTakeFirst
+      .mockReset()
+      .mockResolvedValue(undefined);
     missing.attachmentRepo.findByIdWithContent.mockResolvedValue(undefined);
     const unsupported = createHarness({ fileExt: '.zip' });
 
@@ -203,5 +259,8 @@ describe('AttachmentContentIndexService', () => {
       harness.service.indexAttachmentContent(attachment.id),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(harness.storageService.read).not.toHaveBeenCalled();
+    expect(harness.updateQuery.set).toHaveBeenCalledWith(
+      expect.objectContaining({ contentIndexStatus: 'failed' }),
+    );
   });
 });

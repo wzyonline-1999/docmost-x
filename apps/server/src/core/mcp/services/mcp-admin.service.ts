@@ -12,16 +12,20 @@ import {
   McpAuditLog,
   McpClient,
   McpClientSpacePermission,
+  McpIdempotencyKey,
   UpdatableMcpClient,
 } from '@docmost/db/types/entity.types';
 import { isUserDisabled } from '../../../common/helpers/utils';
 import {
   BulkUpsertMcpClientSpacePermissionsDto,
   CreateMcpClientDto,
+  DiscardMcpRepairRecordDto,
   DeleteMcpClientSpacePermissionDto,
   GetMcpPermissionMatrixDto,
   ListMcpAuditLogsDto,
   ListMcpClientsDto,
+  ListMcpRepairRecordsDto,
+  McpRepairRecordActionDto,
   McpSpacePermissionDto,
   UpdateMcpClientDto,
   UpsertMcpClientSpacePermissionDto,
@@ -105,6 +109,21 @@ type PublicMcpAuditLog = {
   metadata: unknown;
   ipAddress: string | null;
   createdAt: string;
+};
+
+type PublicMcpRepairRecord = {
+  id: string;
+  clientId: string;
+  workspaceId: string;
+  action: string;
+  status: string;
+  idempotencyKeySuffix: string;
+  resourceType: string | null;
+  resourceId: string | null;
+  operationStage: string;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 @Injectable()
@@ -265,10 +284,17 @@ export class McpAdminService {
       workspaceId,
       clients.map((client) => client.id),
     );
+    const userNames = await this.getClientUserNames(workspaceId, clients);
 
     return {
       items: clients.map((client) => ({
         ...this.toManageableClient(client, principal),
+        actorUserName: client.actorUserId
+          ? (userNames.get(client.actorUserId) ?? null)
+          : null,
+        ownerUserName: client.ownerUserId
+          ? (userNames.get(client.ownerUserId) ?? null)
+          : null,
         permissions: permissionsByClientId.get(client.id) ?? [],
       })),
       meta: result.meta,
@@ -615,6 +641,179 @@ export class McpAdminService {
       items: result.items.map((log) => this.toPublicAuditLog(log)),
       meta: result.meta,
     };
+  }
+
+  async listRepairRecords(
+    workspaceId: string,
+    principal: McpAdminPrincipal,
+    dto: ListMcpRepairRecordsDto,
+  ) {
+    const limit = this.resolveLimit(dto.limit);
+    const visibleClientIds = principal.isWorkspaceOwner
+      ? null
+      : await this.listOwnedClientIds(workspaceId, principal.userId);
+    if (visibleClientIds?.length === 0) {
+      return { items: [], meta: this.emptyPaginationMeta(limit) };
+    }
+    if (
+      dto.clientId &&
+      visibleClientIds &&
+      !visibleClientIds.includes(dto.clientId)
+    ) {
+      return { items: [], meta: this.emptyPaginationMeta(limit) };
+    }
+
+    let query = this.db
+      .selectFrom('mcpIdempotencyKeys')
+      .selectAll()
+      .where('workspaceId', '=', workspaceId)
+      .where('deletedAt', 'is', null)
+      .where('status', 'in', ['needs_reconciliation', 'repair_required']);
+
+    if (visibleClientIds) {
+      query = query.where('clientId', 'in', visibleClientIds);
+    }
+    if (dto.clientId) {
+      query = query.where('clientId', '=', dto.clientId);
+    }
+    if (dto.status) {
+      query = query.where('status', '=', dto.status);
+    }
+    if (dto.query) {
+      const searchTerm = `%${dto.query}%`;
+      query = query.where((eb) =>
+        eb.or([
+          eb('action', 'ilike', searchTerm),
+          eb('operationStage', 'ilike', searchTerm),
+          eb('resourceType', 'ilike', searchTerm),
+          eb(eb.cast<string>('resourceId', 'text'), 'ilike', searchTerm),
+          eb('lastError', 'ilike', searchTerm),
+        ]),
+      );
+    }
+
+    const result = await executeWithCursorPagination(query, {
+      perPage: limit,
+      cursor: dto.cursor,
+      beforeCursor: dto.beforeCursor,
+      fields: [
+        { expression: 'updatedAt', direction: 'desc' },
+        { expression: 'id', direction: 'desc' },
+      ],
+      parseCursor: (cursor) => ({
+        updatedAt: new Date(cursor.updatedAt),
+        id: cursor.id,
+      }),
+    });
+
+    return {
+      items: result.items.map((record) => this.toPublicRepairRecord(record)),
+      meta: result.meta,
+    };
+  }
+
+  async retryRepairRecord(
+    workspaceId: string,
+    principal: McpAdminPrincipal,
+    dto: McpRepairRecordActionDto,
+  ): Promise<PublicMcpRepairRecord> {
+    const record = await this.findVisibleRepairRecordOrThrow(
+      workspaceId,
+      principal,
+      dto.recordId,
+    );
+
+    const updated = await this.db.transaction().execute(async (trx) => {
+      const next = await trx
+        .updateTable('mcpIdempotencyKeys')
+        .set({
+          status: 'needs_reconciliation',
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          lastError: null,
+          updatedAt: new Date(),
+        })
+        .where('id', '=', record.id)
+        .where('workspaceId', '=', workspaceId)
+        .where('status', 'in', ['needs_reconciliation', 'repair_required'])
+        .where('updatedAt', '=', new Date(dto.expectedUpdatedAt))
+        .where('deletedAt', 'is', null)
+        .returningAll()
+        .executeTakeFirst();
+      if (!next) {
+        throw this.repairRecordConflict();
+      }
+
+      await this.auditService.log(
+        {
+          workspaceId,
+          actorUserId: principal.userId,
+          clientId: record.clientId,
+          event: 'mcp.idempotency.retry_requested',
+          resourceType: 'mcp_idempotency_key',
+          resourceId: record.id,
+          toolName: 'mcp_admin.retry_repair_record',
+          before: this.toPublicRepairRecord(record),
+          after: this.toPublicRepairRecord(next),
+        },
+        trx,
+      );
+      return next;
+    });
+
+    return this.toPublicRepairRecord(updated);
+  }
+
+  async discardRepairRecord(
+    workspaceId: string,
+    principal: McpAdminPrincipal,
+    dto: DiscardMcpRepairRecordDto,
+  ): Promise<void> {
+    const record = await this.findVisibleRepairRecordOrThrow(
+      workspaceId,
+      principal,
+      dto.recordId,
+    );
+
+    await this.db.transaction().execute(async (trx) => {
+      const discardedAt = new Date();
+      const discarded = await trx
+        .updateTable('mcpIdempotencyKeys')
+        .set({
+          deletedAt: discardedAt,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          updatedAt: discardedAt,
+        })
+        .where('id', '=', record.id)
+        .where('workspaceId', '=', workspaceId)
+        .where('status', 'in', ['needs_reconciliation', 'repair_required'])
+        .where('updatedAt', '=', new Date(dto.expectedUpdatedAt))
+        .where('deletedAt', 'is', null)
+        .returning(['id'])
+        .executeTakeFirst();
+      if (!discarded) {
+        throw this.repairRecordConflict();
+      }
+
+      await this.auditService.log(
+        {
+          workspaceId,
+          actorUserId: principal.userId,
+          clientId: record.clientId,
+          event: 'mcp.idempotency.discarded',
+          resourceType: 'mcp_idempotency_key',
+          resourceId: record.id,
+          toolName: 'mcp_admin.discard_repair_record',
+          before: this.toPublicRepairRecord(record),
+          after: {
+            id: record.id,
+            discardedAt: discardedAt.toISOString(),
+          },
+        },
+        trx,
+      );
+    });
   }
 
   async upsertSpacePermission(
@@ -1167,6 +1366,34 @@ export class McpAdminService {
     return clients.map((client) => client.id);
   }
 
+  private async findVisibleRepairRecordOrThrow(
+    workspaceId: string,
+    principal: McpAdminPrincipal,
+    recordId: string,
+  ): Promise<McpIdempotencyKey> {
+    const record = await this.db
+      .selectFrom('mcpIdempotencyKeys')
+      .selectAll()
+      .where('id', '=', recordId)
+      .where('workspaceId', '=', workspaceId)
+      .where('status', 'in', ['needs_reconciliation', 'repair_required'])
+      .where('deletedAt', 'is', null)
+      .executeTakeFirst();
+    if (!record) {
+      throw new NotFoundException('MCP repair record not found');
+    }
+
+    const client = await this.findVisibleClientOrThrow(
+      workspaceId,
+      principal,
+      record.clientId,
+    );
+    if (!this.canManageClient(client, principal)) {
+      throw new ForbiddenException('MCP repair record access denied');
+    }
+    return record;
+  }
+
   private async assertActiveActorUser(
     workspaceId: string,
     actorUserId?: string | null,
@@ -1230,6 +1457,12 @@ export class McpAdminService {
       nextCursor: null,
       prevCursor: null,
     };
+  }
+
+  private repairRecordConflict(): ConflictException {
+    return new ConflictException(
+      'MCP repair record changed; refresh before retrying',
+    );
   }
 
   private assertPermissionVersion(
@@ -1430,6 +1663,32 @@ export class McpAdminService {
     };
   }
 
+  private async getClientUserNames(
+    workspaceId: string,
+    clients: McpClient[],
+  ): Promise<Map<string, string>> {
+    const userIds = [
+      ...new Set(
+        clients.flatMap((client) =>
+          [client.actorUserId, client.ownerUserId].filter(
+            (userId): userId is string => Boolean(userId),
+          ),
+        ),
+      ),
+    ];
+    if (userIds.length === 0) {
+      return new Map();
+    }
+
+    const users = await this.db
+      .selectFrom('users')
+      .select(['id', 'name'])
+      .where('workspaceId', '=', workspaceId)
+      .where('id', 'in', userIds)
+      .execute();
+    return new Map(users.map((user) => [user.id, user.name]));
+  }
+
   private toPublicPermission(
     permission: McpClientSpacePermission,
   ): PublicMcpSpacePermission {
@@ -1469,6 +1728,25 @@ export class McpAdminService {
       metadata: log.metadata,
       ipAddress: log.ipAddress,
       createdAt: this.toIsoDate(log.createdAt),
+    };
+  }
+
+  private toPublicRepairRecord(
+    record: McpIdempotencyKey,
+  ): PublicMcpRepairRecord {
+    return {
+      id: record.id,
+      clientId: record.clientId,
+      workspaceId: record.workspaceId,
+      action: record.action,
+      status: record.status,
+      idempotencyKeySuffix: record.idempotencyKey.slice(-8),
+      resourceType: record.resourceType,
+      resourceId: record.resourceId,
+      operationStage: record.operationStage,
+      lastError: record.lastError,
+      createdAt: this.toIsoDate(record.createdAt),
+      updatedAt: this.toIsoDate(record.updatedAt),
     };
   }
 

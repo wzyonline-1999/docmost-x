@@ -5,9 +5,11 @@ import { FileMigrationProvider, Kysely, Migrator, sql } from 'kysely';
 import { PostgresJSDialect } from 'kysely-postgres-js';
 import postgres from 'postgres';
 
-const MCP_MIGRATION_COUNT = 7;
+const MCP_MIGRATION_COUNT = 8;
 const OWNERSHIP_HARDENING_MIGRATION =
   '20260726T120000-mcp-client-ownership-hardening';
+const PRODUCTION_HARDENING_MIGRATION =
+  '20260727T120000-mcp-production-hardening';
 const MIGRATION_REHEARSAL_EMBEDDING_MODEL =
   'migration-rehearsal-embedding-1536';
 const SAFE_DATABASE_NAME = /^docmost_mcp_migration_test_[a-z0-9_-]+$/i;
@@ -19,14 +21,18 @@ const MCP_TABLES = [
   'mcp_idempotency_keys',
   'docmost_mcp_chunks',
   'docmost_mcp_index_jobs',
+  'docmost_mcp_eligibility_reconciliations',
 ];
 const REQUIRED_INDEXES = [
   'idx_mcp_clients_token_hash_alive',
   'idx_mcp_clients_workspace_status',
   'idx_mcp_clients_expires_at',
   'idx_mcp_clients_workspace_owner',
+  'uq_mcp_clients_id_workspace',
   'idx_mcp_client_space_permissions_alive',
   'idx_mcp_client_space_permissions_workspace_space',
+  'uq_spaces_id_workspace',
+  'uq_pages_id_workspace_space',
   'idx_mcp_audit_logs_workspace_created',
   'idx_mcp_audit_logs_client_created',
   'idx_mcp_audit_logs_resource_created',
@@ -41,13 +47,38 @@ const REQUIRED_INDEXES = [
   'idx_docmost_mcp_index_jobs_workspace_status',
   'idx_docmost_mcp_index_jobs_workspace_page',
   'idx_docmost_mcp_index_jobs_active_dedupe',
+  'idx_docmost_mcp_index_jobs_parent_status',
+  'idx_docmost_mcp_index_jobs_retention',
+  'idx_docmost_mcp_chunks_model_retention',
+  'idx_mcp_audit_logs_retention',
+  'idx_mcp_eligibility_reconciliation_pending',
+  'idx_attachments_content_index_recovery',
+  'idx_attachments_deletion_recovery',
 ];
 const REQUIRED_CONSTRAINTS = [
   'mcp_clients_status_check',
   'mcp_clients_scope_check',
+  'mcp_clients_ownership_check',
+  'mcp_permissions_client_workspace_fk',
+  'mcp_permissions_space_workspace_fk',
   'mcp_idempotency_keys_status_check',
+  'mcp_idempotency_keys_length_check',
+  'mcp_idempotency_client_workspace_fk',
+  'mcp_chunks_space_workspace_fk',
+  'mcp_chunks_page_workspace_space_fk',
   'docmost_mcp_index_jobs_type_check',
   'docmost_mcp_index_jobs_status_check',
+  'docmost_mcp_index_jobs_parent_fk',
+  'mcp_index_jobs_space_workspace_fk',
+  'mcp_index_jobs_requested_client_workspace_fk',
+  'mcp_eligibility_space_workspace_fk',
+  'mcp_eligibility_attempt_count_check',
+  'mcp_audit_client_workspace_fk',
+  'mcp_audit_space_workspace_fk',
+  'attachments_content_index_status_check',
+  'attachments_deletion_status_check',
+  'attachments_content_index_attempt_count_check',
+  'attachments_deletion_attempt_count_check',
 ];
 
 type DatabaseRow = { currentDatabase: string };
@@ -113,6 +144,7 @@ async function main(): Promise<void> {
       sentinelWorkspaceId,
       schemaName,
     );
+    await assertProductionHardeningBoundaries(db, sentinelWorkspaceId);
     await assertFilteredHnswSearch(db, sentinelWorkspaceId);
 
     const rolledBackMigrations: string[] = [];
@@ -293,6 +325,16 @@ async function assertLegacyOwnershipRepair(
   workspaceId: string,
   schemaName: string,
 ): Promise<void> {
+  const productionRollback = await assertMigrationResult(
+    'production hardening rehearsal down',
+    migrator.migrateDown(),
+  );
+  assert.equal(
+    productionRollback.results?.[0]?.migrationName,
+    PRODUCTION_HARDENING_MIGRATION,
+    'Production hardening must remain the latest migration',
+  );
+
   const rollback = await assertMigrationResult(
     'ownership hardening rehearsal down',
     migrator.migrateDown(),
@@ -446,6 +488,215 @@ async function assertLegacyOwnershipRepair(
     ownerUserId: null,
     status: 'active',
   });
+}
+
+async function assertProductionHardeningBoundaries(
+  db: Kysely<any>,
+  workspaceId: string,
+): Promise<void> {
+  const owner = await sql<{ id: string }>`
+    INSERT INTO users (email, name, role, workspace_id)
+    VALUES (
+      ${`mcp-hardening-owner-${Date.now()}@example.test`},
+      'MCP hardening owner',
+      'admin',
+      ${workspaceId}
+    )
+    RETURNING id::text AS id
+  `.execute(db);
+  const ownerUserId = owner.rows[0]?.id;
+  assert(ownerUserId, 'Failed to create production-hardening owner');
+
+  await assert.rejects(
+    sql`
+      INSERT INTO mcp_clients (
+        workspace_id,
+        name,
+        token_hash,
+        token_last_four,
+        status,
+        global_scopes,
+        actor_user_id,
+        owner_user_id,
+        scope
+      )
+      VALUES (
+        ${workspaceId},
+        'Invalid personal ownership',
+        ${`invalid-owner-${Date.now()}`},
+        'bad1',
+        'disabled',
+        '{}'::jsonb,
+        NULL,
+        ${ownerUserId},
+        'personal'
+      )
+    `.execute(db),
+    /mcp_clients_ownership_check/,
+  );
+
+  const client = await sql<{ id: string }>`
+    INSERT INTO mcp_clients (
+      workspace_id,
+      name,
+      token_hash,
+      token_last_four,
+      status,
+      global_scopes,
+      actor_user_id,
+      owner_user_id,
+      scope
+    )
+    VALUES (
+      ${workspaceId},
+      'Hardening boundary client',
+      ${`hardening-token-${Date.now()}`},
+      'hard',
+      'active',
+      '{}'::jsonb,
+      ${ownerUserId},
+      ${ownerUserId},
+      'personal'
+    )
+    RETURNING id::text AS id
+  `.execute(db);
+  const clientId = client.rows[0]?.id;
+  assert(clientId, 'Failed to create hardening boundary client');
+
+  await assert.rejects(
+    sql`
+      INSERT INTO mcp_idempotency_keys (
+        client_id,
+        workspace_id,
+        idempotency_key,
+        action,
+        status
+      )
+      VALUES (
+        ${clientId},
+        ${workspaceId},
+        ${'x'.repeat(201)},
+        'migration_rehearsal',
+        'in_progress'
+      )
+    `.execute(db),
+    /mcp_idempotency_keys_length_check/,
+  );
+
+  const attachmentColumns = await sql<NameRow>`
+    SELECT column_name AS name
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'attachments'
+      AND column_name IN (
+        'content_index_status',
+        'content_index_lease_owner',
+        'content_index_lease_expires_at',
+        'deletion_status',
+        'deletion_attempt_count'
+      )
+  `.execute(db);
+  assert.deepEqual(
+    new Set(attachmentColumns.rows.map((row) => row.name)),
+    new Set([
+      'content_index_status',
+      'content_index_lease_owner',
+      'content_index_lease_expires_at',
+      'deletion_status',
+      'deletion_attempt_count',
+    ]),
+  );
+
+  const triggerNames = await sql<NameRow>`
+    SELECT trigger_name AS name
+    FROM information_schema.triggers
+    WHERE trigger_schema = current_schema()
+      AND trigger_name LIKE 'trg_mcp_reconcile_%'
+  `.execute(db);
+  assert.deepEqual(
+    new Set(triggerNames.rows.map((row) => row.name)),
+    new Set([
+      'trg_mcp_reconcile_space_members',
+      'trg_mcp_reconcile_group_users',
+      'trg_mcp_reconcile_users_status',
+      'trg_mcp_reconcile_page_access',
+      'trg_mcp_reconcile_page_permissions',
+      'trg_mcp_reconcile_client_permissions',
+      'trg_mcp_reconcile_clients',
+      'trg_mcp_reconcile_pages',
+      'trg_mcp_reconcile_spaces',
+    ]),
+  );
+
+  const pageChunkForeignKey = await sql<{ updateAction: string }>`
+    SELECT confupdtype::text AS "updateAction"
+    FROM pg_constraint
+    WHERE conname = 'mcp_chunks_page_workspace_space_fk'
+  `.execute(db);
+  assert.equal(
+    pageChunkForeignKey.rows[0]?.updateAction,
+    'c',
+    'Page chunk ownership must cascade when a page moves between spaces',
+  );
+
+  const suffix = Date.now().toString(36);
+  const space = await sql<{ id: string }>`
+    INSERT INTO spaces (name, slug, workspace_id)
+    VALUES (
+      'MCP reconciliation rehearsal',
+      ${`mcp-reconciliation-${suffix}`},
+      ${workspaceId}::uuid
+    )
+    RETURNING id::text AS id
+  `.execute(db);
+  const spaceId = space.rows[0]?.id;
+  assert(spaceId, 'Failed to create reconciliation rehearsal space');
+
+  await sql`
+    INSERT INTO space_members (space_id, user_id, role)
+    VALUES (${spaceId}::uuid, ${ownerUserId}::uuid, 'admin')
+  `.execute(db);
+  await sql`
+    INSERT INTO mcp_client_space_permissions (
+      client_id,
+      workspace_id,
+      space_id,
+      can_index
+    )
+    VALUES (
+      ${clientId}::uuid,
+      ${workspaceId}::uuid,
+      ${spaceId}::uuid,
+      true
+    )
+  `.execute(db);
+
+  const queuedByPermission = await sql<{ reason: string }>`
+    SELECT reason
+    FROM docmost_mcp_eligibility_reconciliations
+    WHERE workspace_id = ${workspaceId}::uuid
+      AND space_id = ${spaceId}::uuid
+  `.execute(db);
+  assert.equal(queuedByPermission.rows[0]?.reason, 'mcp_permission');
+
+  await sql`
+    DELETE FROM docmost_mcp_eligibility_reconciliations
+    WHERE workspace_id = ${workspaceId}::uuid
+      AND space_id = ${spaceId}::uuid
+  `.execute(db);
+  await sql`
+    UPDATE users
+    SET deactivated_at = now()
+    WHERE id = ${ownerUserId}::uuid
+  `.execute(db);
+
+  const queuedByUser = await sql<{ reason: string }>`
+    SELECT reason
+    FROM docmost_mcp_eligibility_reconciliations
+    WHERE workspace_id = ${workspaceId}::uuid
+      AND space_id = ${spaceId}::uuid
+  `.execute(db);
+  assert.equal(queuedByUser.rows[0]?.reason, 'user_status');
 }
 
 function isPgvectorVersionSupported(version: string | undefined): boolean {
@@ -654,6 +905,10 @@ async function getTableNames(
 
 void main().catch((error: unknown) => {
   const errorType = error instanceof Error ? error.name : typeof error;
-  process.stderr.write(`MCP migration rehearsal failed (${errorType})\n`);
+  const errorMessage =
+    error instanceof Error && error.message ? `: ${error.message}` : '';
+  process.stderr.write(
+    `MCP migration rehearsal failed (${errorType})${errorMessage}\n`,
+  );
   process.exitCode = 1;
 });

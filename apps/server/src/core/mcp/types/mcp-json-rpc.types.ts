@@ -1,7 +1,7 @@
 export type JsonRpcId = string | number | null;
 
 export type McpJsonRpcRequest = {
-  jsonrpc?: '2.0';
+  jsonrpc: '2.0';
   id?: JsonRpcId;
   method: string;
   params?: unknown;

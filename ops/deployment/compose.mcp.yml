@@ -27,7 +27,7 @@ services:
       start_period: 45s
 
   redis:
-    image: redis:8-alpine
+    image: redis:8-alpine@sha256:8096655e437712b07503796fb64d81359256cfcff0ab29d95a7da72863786efb
     command: [redis-server, --appendonly, "yes", --maxmemory-policy, noeviction]
     restart: unless-stopped
     volumes:

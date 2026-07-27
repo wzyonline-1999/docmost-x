@@ -9,7 +9,7 @@ import {
 } from "@mantine/core";
 import { Spotlight } from "@mantine/spotlight";
 import { Link } from "react-router-dom";
-import { IconFile, IconDownload } from "@tabler/icons-react";
+import { IconFile, IconDownload, IconPaperclip } from "@tabler/icons-react";
 import { buildPageUrl, getPageTitle } from "@/features/page/page.utils";
 import { getPageIcon } from "@/lib";
 import {
@@ -138,6 +138,15 @@ export function SearchResultItem({
               <Text size="xs" c="dimmed" className={classes.resultPath}>
                 {path.join(" / ")}
               </Text>
+            )}
+
+            {pageResult.contentSource?.type === "attachment" && (
+              <Group gap={4} wrap="nowrap" className={classes.resultPath}>
+                <IconPaperclip size={12} aria-label={t("Attachments")} />
+                <Text size="xs" c="dimmed" truncate>
+                  {pageResult.contentSource.fileName}
+                </Text>
+              </Group>
             )}
 
             {pageResult?.highlight && (

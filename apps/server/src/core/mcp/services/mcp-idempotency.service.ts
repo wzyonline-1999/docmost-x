@@ -6,10 +6,13 @@ import type { Json } from '@docmost/db/types/db';
 import { KyselyDB } from '@docmost/db/types/kysely.types';
 import type { McpAuthenticatedClient } from '../types/mcp.types';
 import { getMcpSafeErrorMessage } from '../utils/mcp-error.util';
+import { McpDistributedTaskService } from './mcp-distributed-task.service';
 
 const IDEMPOTENCY_LEASE_MS = 5 * 60 * 1000;
-const IDEMPOTENCY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const IDEMPOTENCY_HEARTBEAT_MS = Math.floor(IDEMPOTENCY_LEASE_MS / 3);
+const IDEMPOTENCY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const IDEMPOTENCY_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+const IDEMPOTENCY_CLEANUP_LOCK_MS = 10 * 60 * 1000;
 
 type McpIdempotencyCheckpoint = {
   stage: string;
@@ -57,7 +60,10 @@ type IdempotencyInput<T> = {
 
 @Injectable()
 export class McpIdempotencyService {
-  constructor(@InjectKysely() private readonly db: KyselyDB) {}
+  constructor(
+    @InjectKysely() private readonly db: KyselyDB,
+    private readonly distributedTaskService: McpDistributedTaskService,
+  ) {}
 
   async run<T>(input: IdempotencyInput<T>): Promise<T> {
     if (!input.idempotencyKey) {
@@ -190,19 +196,25 @@ export class McpIdempotencyService {
     let response: T;
     let hasDurableResource = Boolean(input.resourceId);
     try {
-      response = await input.run({
-        checkpointResourceId: async (resourceId) => {
-          await this.checkpointOperation(reservationId, leaseOwner, {
-            stage: 'resource_checkpointed',
-            resourceId,
-          });
-          hasDurableResource = true;
-        },
-        checkpoint: async (checkpoint) => {
-          await this.checkpointOperation(reservationId, leaseOwner, checkpoint);
-          hasDurableResource ||= Boolean(checkpoint.resourceId);
-        },
-      });
+      response = await this.withLeaseHeartbeat(reservationId, leaseOwner, () =>
+        input.run({
+          checkpointResourceId: async (resourceId) => {
+            await this.checkpointOperation(reservationId, leaseOwner, {
+              stage: 'resource_checkpointed',
+              resourceId,
+            });
+            hasDurableResource = true;
+          },
+          checkpoint: async (checkpoint) => {
+            await this.checkpointOperation(
+              reservationId,
+              leaseOwner,
+              checkpoint,
+            );
+            hasDurableResource ||= Boolean(checkpoint.resourceId);
+          },
+        }),
+      );
     } catch (err) {
       if (hasDurableResource) {
         await this.markOwnedNeedsReconciliation(reservationId, leaseOwner, err);
@@ -229,16 +241,28 @@ export class McpIdempotencyService {
     existing: Awaited<ReturnType<McpIdempotencyService['findExisting']>>,
     leaseOwner: string,
   ): Promise<T> {
+    const reconcile = input.reconcile;
+    if (!reconcile) {
+      throw new ConflictException(
+        'Idempotent request requires reconciliation before it can be retried',
+      );
+    }
+
     let reconciliation: McpIdempotencyReconciliation<T>;
     try {
-      reconciliation = await input.reconcile({
-        action: existing.action,
-        resourceType: existing.resourceType,
-        resourceId: existing.resourceId,
-        operationStage: existing.operationStage,
-        beforeState: existing.beforeState,
-        targetState: existing.targetState,
-      });
+      reconciliation = await this.withLeaseHeartbeat(
+        existing.id,
+        leaseOwner,
+        () =>
+          reconcile({
+            action: existing.action,
+            resourceType: existing.resourceType,
+            resourceId: existing.resourceId,
+            operationStage: existing.operationStage,
+            beforeState: existing.beforeState,
+            targetState: existing.targetState,
+          }),
+      );
     } catch (err) {
       await this.markOwnedNeedsReconciliation(existing.id, leaseOwner, err);
       throw err;
@@ -368,6 +392,7 @@ export class McpIdempotencyService {
       ...(typeof checkpoint.targetState !== 'undefined'
         ? { targetState: this.toNullableJson(checkpoint.targetState) }
         : {}),
+      leaseExpiresAt: new Date(Date.now() + IDEMPOTENCY_LEASE_MS),
       updatedAt: new Date(),
     };
     const checkpointResult = await this.db
@@ -475,9 +500,18 @@ export class McpIdempotencyService {
     expiredLeases: number;
     deletedRecords: number;
   }> {
-    const expiredLeases = await this.markExpiredLeasesForReconciliation();
-    const deletedRecords = await this.cleanupExpired();
-    return { expiredLeases, deletedRecords };
+    const result = await this.distributedTaskService.runWithLock(
+      'idempotency-maintenance',
+      IDEMPOTENCY_CLEANUP_LOCK_MS,
+      async () => {
+        const expiredLeases = await this.markExpiredLeasesForReconciliation();
+        const deletedRecords = await this.cleanupExpired();
+        return { expiredLeases, deletedRecords };
+      },
+    );
+    return result.acquired
+      ? result.value
+      : { expiredLeases: 0, deletedRecords: 0 };
   }
 
   async markExpiredLeasesForReconciliation(): Promise<number> {
@@ -526,6 +560,58 @@ export class McpIdempotencyService {
 
   private getSafeErrorMessage(err: unknown): string {
     return getMcpSafeErrorMessage(err, 'MCP operation requires reconciliation');
+  }
+
+  private async withLeaseHeartbeat<T>(
+    reservationId: string,
+    leaseOwner: string,
+    task: () => Promise<T>,
+  ): Promise<T> {
+    let heartbeatError: unknown;
+    let heartbeatInFlight: Promise<void> | undefined;
+    const heartbeat = () => {
+      if (heartbeatInFlight) return;
+      heartbeatInFlight = this.renewLease(reservationId, leaseOwner)
+        .catch((err) => {
+          heartbeatError = err;
+        })
+        .finally(() => {
+          heartbeatInFlight = undefined;
+        });
+    };
+    const timer = setInterval(heartbeat, IDEMPOTENCY_HEARTBEAT_MS);
+    timer.unref?.();
+    try {
+      const result = await task();
+      await heartbeatInFlight;
+      if (heartbeatError) {
+        throw heartbeatError;
+      }
+      return result;
+    } finally {
+      clearInterval(timer);
+    }
+  }
+
+  private async renewLease(
+    reservationId: string,
+    leaseOwner: string,
+  ): Promise<void> {
+    const renewed = await this.db
+      .updateTable('mcpIdempotencyKeys')
+      .set({
+        leaseExpiresAt: new Date(Date.now() + IDEMPOTENCY_LEASE_MS),
+        updatedAt: new Date(),
+      })
+      .where('id', '=', reservationId)
+      .where('status', '=', 'in_progress')
+      .where('leaseOwner', '=', leaseOwner)
+      .where('deletedAt', 'is', null)
+      .returning(['id'])
+      .executeTakeFirst();
+    if (!renewed) {
+      throw new ConflictException('Idempotency lease was lost');
+    }
   }
 }
 

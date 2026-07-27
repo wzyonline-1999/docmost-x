@@ -139,7 +139,8 @@ export class DeveloperApiController {
     }
 
     const client = await this.tokenService.authenticateToken(token);
-    this.rateLimitService.assertWithinLimit(client);
+    await this.rateLimitService.assertWithinLimit(client);
+    await this.tokenService.recordSuccessfulUse(client.id);
     return client;
   }
 
@@ -172,7 +173,9 @@ export class DeveloperApiController {
 
     const headerValue = this.getHeader(req, 'idempotency-key')?.trim();
     if (!headerValue) {
-      return args;
+      throw new BadRequestException(
+        'Idempotency-Key header is required for mutation tools',
+      );
     }
     if (headerValue.length > MAX_IDEMPOTENCY_KEY_LENGTH) {
       throw new BadRequestException(

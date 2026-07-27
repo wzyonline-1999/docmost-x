@@ -92,6 +92,7 @@ describe('McpAdminService admin boundaries', () => {
   const userQuery = {
     select: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
+    execute: jest.fn(),
     executeTakeFirst: jest.fn(),
   };
   const spaceQuery = {
@@ -168,6 +169,7 @@ describe('McpAdminService admin boundaries', () => {
       deactivatedAt: null,
       deletedAt: null,
     });
+    userQuery.execute.mockResolvedValue([{ id: 'admin-1', name: 'Admin One' }]);
     spaceQuery.execute.mockResolvedValue([{ id: permission.spaceId }]);
     auditQuery.execute.mockResolvedValue([auditLog]);
     effectivePermissionService.getClientSpaceCeilings.mockImplementation(
@@ -369,6 +371,8 @@ describe('McpAdminService admin boundaries', () => {
       expect.objectContaining({
         id: client.id,
         tokenLastFour: client.tokenLastFour,
+        actorUserName: 'Admin One',
+        ownerUserName: 'Admin One',
         permissions: [expect.objectContaining({ id: permission.id })],
       }),
     );

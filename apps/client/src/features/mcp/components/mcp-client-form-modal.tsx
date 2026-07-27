@@ -105,14 +105,21 @@ export function McpClientFormModal({
     ) {
       options.unshift({
         value: selectedActorId,
-        label: `${t("Current representative user")} (${selectedActorId.slice(
-          0,
-          8,
-        )})`,
+        label:
+          client?.actorUserName ??
+          `${t("Current representative user")} (${selectedActorId.slice(
+            0,
+            8,
+          )})`,
       });
     }
     return options;
-  }, [form.values.actorUserId, membersQuery.data?.items, t]);
+  }, [
+    client?.actorUserName,
+    form.values.actorUserId,
+    membersQuery.data?.items,
+    t,
+  ]);
   const pending = createMutation.isPending || updateMutation.isPending;
   const closeModal = () => {
     setActorSearch("");

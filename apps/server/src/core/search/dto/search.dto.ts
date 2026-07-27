@@ -8,12 +8,14 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  MaxLength,
 } from 'class-validator';
 import { OmitType } from '@nestjs/mapped-types';
 
 export class SearchDTO {
   @IsNotEmpty()
   @IsString()
+  @MaxLength(10_000)
   query: string;
 
   @IsOptional()
