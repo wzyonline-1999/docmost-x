@@ -17,6 +17,15 @@ describe('SearchService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (environmentService as any).isVectorSearchEnabled.mockReturnValue(true);
+    (environmentService as any).getVectorHybridKeywordWeight.mockReturnValue(
+      0.25,
+    );
+    (environmentService as any).getVectorHybridSemanticWeight.mockReturnValue(
+      0.65,
+    );
+    (environmentService as any).getVectorHybridRecencyWeight.mockReturnValue(
+      0.1,
+    );
     service = new SearchService(
       dependency,
       dependency,
@@ -71,6 +80,56 @@ describe('SearchService', () => {
     );
     expect(result.find((item) => item.id === 'semantic-page')?.source).toBe(
       'semantic',
+    );
+  });
+
+  it('keeps earlier hybrid pages stable when the candidate prefix grows', () => {
+    const keyword = ['J', 'I', 'K', 'C', 'L', 'G'].map((id, index) =>
+      searchResult(id, 1 - index / 10),
+    );
+    const semantic = ['F', 'G', 'H', 'B', 'A', 'C'].map((id, index) =>
+      searchResult(id, 1 - index / 10, 'semantic'),
+    );
+
+    const firstPage = (service as any).mergeSearchResults(
+      keyword.slice(0, 3),
+      semantic.slice(0, 3),
+      3,
+    ) as SearchResponseDto[];
+    const firstTwoPages = (service as any).mergeSearchResults(
+      keyword,
+      semantic,
+      6,
+    ) as SearchResponseDto[];
+    const secondPage = firstTwoPages.slice(3, 6);
+
+    expect(firstTwoPages.slice(0, 3).map((item) => item.id)).toEqual(
+      firstPage.map((item) => item.id),
+    );
+    const firstPageIds = new Set(firstPage.map((item) => item.id));
+    expect(secondPage.some((item) => firstPageIds.has(item.id))).toBe(false);
+  });
+
+  it('keeps the configured recency component in stable hybrid ranking', () => {
+    (environmentService as any).getVectorHybridKeywordWeight.mockReturnValue(0);
+    (environmentService as any).getVectorHybridSemanticWeight.mockReturnValue(
+      0,
+    );
+    (environmentService as any).getVectorHybridRecencyWeight.mockReturnValue(1);
+    const oldPage = searchResult('old-page', 1);
+    oldPage.updatedAt = new Date('2020-01-01T00:00:00Z');
+    const recentPage = searchResult('recent-page', 0.5);
+    recentPage.updatedAt = new Date();
+
+    const result = (service as any).mergeSearchResults(
+      [oldPage, recentPage],
+      [],
+      2,
+    ) as SearchResponseDto[];
+
+    expect(result.map((item) => item.id)).toEqual(['recent-page', 'old-page']);
+    expect(result[0].scores?.final).toBeGreaterThan(
+      result[1].scores?.final ?? 0,
     );
   });
 
@@ -179,13 +238,21 @@ describe('SearchService', () => {
 
   it('uses exact scoped vector search with creator and offset filters', async () => {
     const bestChunks = { alias: 'bestChunks' };
+    const chunkThresholdQuery = createQueryBuilder();
+    chunkThresholdQuery.executeTakeFirst.mockResolvedValue(undefined);
     const exactQuery = createQueryBuilder([]);
     exactQuery.as.mockReturnValue(bestChunks);
     const outerQuery = createQueryBuilder([semanticRow('page-1', 0.91)]);
+    let chunkQueryCount = 0;
     const db = {
-      selectFrom: jest.fn((source) =>
-        source === bestChunks ? outerQuery : exactQuery,
-      ),
+      selectFrom: jest.fn((source) => {
+        if (source === bestChunks) return outerQuery;
+        if (source === 'docmostMcpChunks as chunks') {
+          chunkQueryCount += 1;
+          return chunkQueryCount === 1 ? chunkThresholdQuery : exactQuery;
+        }
+        return exactQuery;
+      }),
     };
     const permissionPredicate = { permission: 'readable' };
     const pagePermissionRepo = {
@@ -197,7 +264,7 @@ describe('SearchService', () => {
       getVectorHybridSemanticWeight: jest.fn(() => 0.65),
       getVectorHybridRecencyWeight: jest.fn(() => 0.1),
       getEmbeddingModel: jest.fn(() => 'embedding-model'),
-      getVectorExactPageThreshold: jest.fn(() => 400),
+      getVectorExactChunkThreshold: jest.fn(() => 4000),
     };
     const embeddingService = {
       createEmbeddings: jest.fn().mockResolvedValue([[0.1, 0.2, 0.3]]),
@@ -238,10 +305,61 @@ describe('SearchService', () => {
       'creator-id',
     );
     expect(exactQuery.where).toHaveBeenCalledWith(permissionPredicate);
+    expect(chunkThresholdQuery.where).toHaveBeenCalledWith(
+      'chunks.embeddingModel',
+      '=',
+      'embedding-model',
+    );
+    expect(chunkThresholdQuery.offset).toHaveBeenCalledWith(4000);
     expect(outerQuery.limit).toHaveBeenCalledWith(2);
     expect(outerQuery.offset).toHaveBeenCalledWith(3);
     expect(result).toHaveLength(1);
   });
+
+  it.each([
+    [4000, true],
+    [4001, false],
+  ])(
+    'selects exact vector search by active chunk count (%i => %s)',
+    async (chunkCount, expected) => {
+      const thresholdQuery = createQueryBuilder();
+      thresholdQuery.executeTakeFirst.mockResolvedValue(
+        chunkCount > 4000 ? { id: 'overflow-chunk' } : undefined,
+      );
+      const db = { selectFrom: jest.fn(() => thresholdQuery) };
+      const chunkService = new SearchService(
+        db as never,
+        dependency,
+        dependency,
+        dependency,
+        dependency,
+        {
+          getEmbeddingModel: jest.fn(() => 'embedding-model'),
+          getVectorExactChunkThreshold: jest.fn(() => 4000),
+        } as never,
+        dependency,
+        pageTreeScopeService as never,
+      );
+
+      await expect(
+        (chunkService as any).shouldUseExactVectorSearch('workspace-id', [
+          '11111111-1111-4111-8111-111111111111',
+        ]),
+      ).resolves.toBe(expected);
+      expect(thresholdQuery.where).toHaveBeenCalledWith(
+        'chunks.workspaceId',
+        '=',
+        'workspace-id',
+      );
+      expect(thresholdQuery.where).toHaveBeenCalledWith(
+        'chunks.deletedAt',
+        'is',
+        null,
+      );
+      expect(thresholdQuery.limit).toHaveBeenCalledWith(1);
+      expect(thresholdQuery.offset).toHaveBeenCalledWith(4000);
+    },
+  );
 
   it('expands ANN candidates until enough unique pages are recalled', async () => {
     const firstCandidates = Array.from({ length: 200 }, () =>
@@ -262,7 +380,7 @@ describe('SearchService', () => {
       getVectorHybridSemanticWeight: jest.fn(() => 0.65),
       getVectorHybridRecencyWeight: jest.fn(() => 0.1),
       getEmbeddingModel: jest.fn(() => 'embedding-model'),
-      getVectorExactPageThreshold: jest.fn(() => 400),
+      getVectorExactChunkThreshold: jest.fn(() => 4000),
       getVectorAnnCandidateMultiplier: jest.fn(() => 2),
       getVectorAnnMaxCandidates: jest.fn(() => 400),
     };
@@ -321,6 +439,7 @@ function createQueryBuilder(rows: unknown[] = []) {
     as: jest.fn(),
     $if: jest.fn(),
     execute: jest.fn().mockResolvedValue(rows),
+    executeTakeFirst: jest.fn().mockResolvedValue(rows[0]),
   };
 
   for (const method of [

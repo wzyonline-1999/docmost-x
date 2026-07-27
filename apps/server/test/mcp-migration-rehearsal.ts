@@ -5,7 +5,11 @@ import { FileMigrationProvider, Kysely, Migrator, sql } from 'kysely';
 import { PostgresJSDialect } from 'kysely-postgres-js';
 import postgres from 'postgres';
 
-const MCP_MIGRATION_COUNT = 6;
+const MCP_MIGRATION_COUNT = 7;
+const OWNERSHIP_HARDENING_MIGRATION =
+  '20260726T120000-mcp-client-ownership-hardening';
+const MIGRATION_REHEARSAL_EMBEDDING_MODEL =
+  'migration-rehearsal-embedding-1536';
 const SAFE_DATABASE_NAME = /^docmost_mcp_migration_test_[a-z0-9_-]+$/i;
 const SAFE_SCHEMA_NAME = /^[a-z][a-z0-9_]*$/;
 const MCP_TABLES = [
@@ -103,6 +107,13 @@ async function main(): Promise<void> {
     const sentinelWorkspaceId = sentinel.rows[0]?.id;
     assert(sentinelWorkspaceId, 'Failed to create base-data sentinel');
     await assertPostgresBoundaries(db, sentinelWorkspaceId);
+    await assertLegacyOwnershipRepair(
+      db,
+      migrator,
+      sentinelWorkspaceId,
+      schemaName,
+    );
+    await assertFilteredHnswSearch(db, sentinelWorkspaceId);
 
     const rolledBackMigrations: string[] = [];
     for (let index = 0; index < MCP_MIGRATION_COUNT; index += 1) {
@@ -161,6 +172,7 @@ async function main(): Promise<void> {
           requiredConstraintCount: REQUIRED_CONSTRAINTS.length,
           baseDataPreserved: true,
           exposedRoleGrants: 0,
+          filteredHnswStrictOrder: true,
           status: 'passed',
         },
         null,
@@ -199,13 +211,21 @@ async function assertMcpSchema(
     assert(tableNames.has(table), `${table} is missing after migration`);
   }
 
-  const extension = await sql<NameRow>`
-    SELECT extname AS name FROM pg_extension WHERE extname = 'vector'
+  const extension = await sql<NameRow & { version: string }>`
+    SELECT extname AS name, extversion AS version
+    FROM pg_extension
+    WHERE extname = 'vector'
   `.execute(db);
   assert.equal(
     extension.rows[0]?.name,
     'vector',
     'pgvector extension is missing',
+  );
+  assert(
+    isPgvectorVersionSupported(extension.rows[0]?.version),
+    `pgvector 0.8.0 or newer is required, found ${
+      extension.rows[0]?.version ?? 'missing'
+    }`,
   );
 
   const vectorColumn = await sql<{ declaredType: string }>`
@@ -267,6 +287,176 @@ async function assertMcpSchema(
   );
 }
 
+async function assertLegacyOwnershipRepair(
+  db: Kysely<any>,
+  migrator: Migrator,
+  workspaceId: string,
+  schemaName: string,
+): Promise<void> {
+  const rollback = await assertMigrationResult(
+    'ownership hardening rehearsal down',
+    migrator.migrateDown(),
+  );
+  assert.equal(
+    rollback.results?.[0]?.migrationName,
+    OWNERSHIP_HARDENING_MIGRATION,
+    'Ownership hardening must remain the latest migration',
+  );
+
+  const user = await sql<{ id: string }>`
+    INSERT INTO users (email, name, role, workspace_id)
+    VALUES (
+      ${`mcp-migration-owner-${Date.now()}@example.test`},
+      'MCP migration owner',
+      'admin',
+      ${workspaceId}
+    )
+    RETURNING id::text AS id
+  `.execute(db);
+  const ownerUserId = user.rows[0]?.id;
+  assert(ownerUserId, 'Failed to create ownership migration user');
+
+  const legacy = await sql<{ id: string }>`
+    INSERT INTO mcp_clients (
+      workspace_id,
+      name,
+      token_hash,
+      token_last_four,
+      status,
+      global_scopes,
+      actor_user_id,
+      created_by_id,
+      owner_user_id,
+      scope
+    )
+    VALUES (
+      ${workspaceId},
+      'Legacy personal client without actor',
+      ${`legacy-token-${Date.now()}`},
+      'old1',
+      'active',
+      '{}'::jsonb,
+      NULL,
+      ${ownerUserId},
+      ${ownerUserId},
+      'personal'
+    )
+    RETURNING id::text AS id
+  `.execute(db);
+  const legacyClientId = legacy.rows[0]?.id;
+  assert(legacyClientId, 'Failed to create legacy MCP client');
+
+  const valid = await sql<{ id: string }>`
+    INSERT INTO mcp_clients (
+      workspace_id,
+      name,
+      token_hash,
+      token_last_four,
+      status,
+      global_scopes,
+      actor_user_id,
+      created_by_id,
+      owner_user_id,
+      scope
+    )
+    VALUES (
+      ${workspaceId},
+      'Valid personal client',
+      ${`valid-token-${Date.now()}`},
+      'new1',
+      'active',
+      '{}'::jsonb,
+      ${ownerUserId},
+      ${ownerUserId},
+      ${ownerUserId},
+      'personal'
+    )
+    RETURNING id::text AS id
+  `.execute(db);
+  const validClientId = valid.rows[0]?.id;
+  assert(validClientId, 'Failed to create valid MCP client');
+
+  const workspaceClient = await sql<{ id: string }>`
+    INSERT INTO mcp_clients (
+      workspace_id,
+      name,
+      token_hash,
+      token_last_four,
+      status,
+      global_scopes,
+      actor_user_id,
+      created_by_id,
+      owner_user_id,
+      scope
+    )
+    VALUES (
+      ${workspaceId},
+      'Legacy workspace client with owner',
+      ${`workspace-token-${Date.now()}`},
+      'ws01',
+      'active',
+      '{}'::jsonb,
+      ${ownerUserId},
+      ${ownerUserId},
+      ${ownerUserId},
+      'workspace'
+    )
+    RETURNING id::text AS id
+  `.execute(db);
+  const workspaceClientId = workspaceClient.rows[0]?.id;
+  assert(workspaceClientId, 'Failed to create legacy workspace MCP client');
+
+  await assertMigrationResult(
+    'ownership hardening rehearsal up',
+    migrator.migrateToLatest(),
+  );
+  await assertMcpSchema(db, schemaName);
+
+  const clients = await sql<{
+    id: string;
+    actorUserId: string | null;
+    ownerUserId: string | null;
+    status: string;
+  }>`
+    SELECT
+      id::text AS id,
+      actor_user_id::text AS "actorUserId",
+      owner_user_id::text AS "ownerUserId",
+      status
+    FROM mcp_clients
+    WHERE id IN (${legacyClientId}, ${validClientId}, ${workspaceClientId})
+  `.execute(db);
+  const byId = new Map(clients.rows.map((client) => [client.id, client]));
+
+  assert.deepEqual(byId.get(legacyClientId), {
+    id: legacyClientId,
+    actorUserId: ownerUserId,
+    ownerUserId,
+    status: 'disabled',
+  });
+  assert.deepEqual(byId.get(validClientId), {
+    id: validClientId,
+    actorUserId: ownerUserId,
+    ownerUserId,
+    status: 'active',
+  });
+  assert.deepEqual(byId.get(workspaceClientId), {
+    id: workspaceClientId,
+    actorUserId: ownerUserId,
+    ownerUserId: null,
+    status: 'active',
+  });
+}
+
+function isPgvectorVersionSupported(version: string | undefined): boolean {
+  const match = version?.match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
+  if (!match) return false;
+
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 0 || minor >= 8;
+}
+
 async function assertPostgresBoundaries(
   db: Kysely<any>,
   workspaceId: string,
@@ -305,6 +495,149 @@ async function assertPostgresBoundaries(
     { requestId: 'ipv6', ipAddress: '2001:db8::1' },
     { requestId: 'null', ipAddress: null },
   ]);
+}
+
+async function assertFilteredHnswSearch(
+  db: Kysely<any>,
+  workspaceId: string,
+): Promise<void> {
+  const suffix = Date.now().toString(36);
+  const space = await sql<{ id: string }>`
+    INSERT INTO spaces (name, slug, workspace_id)
+    VALUES (
+      'MCP filtered HNSW rehearsal',
+      ${`mcp-filtered-hnsw-${suffix}`},
+      ${workspaceId}::uuid
+    )
+    RETURNING id::text AS id
+  `.execute(db);
+  const spaceId = space.rows[0]?.id;
+  assert(spaceId, 'Failed to create filtered HNSW rehearsal space');
+
+  const pages = await sql<{ id: string; title: string }>`
+    INSERT INTO pages (slug_id, title, space_id, workspace_id)
+    VALUES
+      (
+        ${`mcp-hnsw-distractor-${suffix}`},
+        'HNSW distractor page',
+        ${spaceId}::uuid,
+        ${workspaceId}::uuid
+      ),
+      (
+        ${`mcp-hnsw-scoped-${suffix}`},
+        'HNSW scoped page',
+        ${spaceId}::uuid,
+        ${workspaceId}::uuid
+      )
+    RETURNING id::text AS id, title
+  `.execute(db);
+  const distractorPageId = pages.rows.find(
+    (page) => page.title === 'HNSW distractor page',
+  )?.id;
+  const scopedPageId = pages.rows.find(
+    (page) => page.title === 'HNSW scoped page',
+  )?.id;
+  assert(distractorPageId, 'Failed to create HNSW distractor page');
+  assert(scopedPageId, 'Failed to create HNSW scoped page');
+
+  await sql`
+    INSERT INTO docmost_mcp_chunks (
+      workspace_id,
+      space_id,
+      page_id,
+      chunk_index,
+      title,
+      content,
+      content_hash,
+      embedding,
+      embedding_model,
+      embedding_dimensions,
+      indexed_at
+    )
+    SELECT
+      ${workspaceId}::uuid,
+      ${spaceId}::uuid,
+      CASE
+        WHEN sample <= 96 THEN ${distractorPageId}::uuid
+        ELSE ${scopedPageId}::uuid
+      END,
+      CASE WHEN sample <= 96 THEN sample - 1 ELSE sample - 97 END,
+      CASE
+        WHEN sample <= 96 THEN 'HNSW distractor'
+        ELSE 'HNSW scoped result'
+      END,
+      'Filtered HNSW migration rehearsal chunk ' || sample,
+      ${suffix} || '-chunk-' || sample,
+      (
+        ARRAY[
+          CASE WHEN sample <= 96 THEN 1.0 ELSE 0.65 END::real,
+          CASE
+            WHEN sample <= 96 THEN sample / 100000.0
+            ELSE 0.65 + (sample - 96) / 1000.0
+          END::real
+        ] || array_fill(0::real, ARRAY[1534])
+      )::vector,
+      ${MIGRATION_REHEARSAL_EMBEDDING_MODEL},
+      1536,
+      now()
+    FROM generate_series(1, 128) AS sample
+  `.execute(db);
+
+  await db.transaction().execute(async (trx) => {
+    await sql`SET LOCAL hnsw.iterative_scan = strict_order`.execute(trx);
+    const setting = await sql<{ value: string }>`
+      SELECT current_setting('hnsw.iterative_scan') AS value
+    `.execute(trx);
+    assert.equal(setting.rows[0]?.value, 'strict_order');
+
+    await sql`SET LOCAL enable_seqscan = off`.execute(trx);
+    const queryVector = sql`
+      (ARRAY[1::real, 0::real] || array_fill(0::real, ARRAY[1534]))::vector
+    `;
+    const plan = await sql<Record<string, unknown>>`
+      EXPLAIN (COSTS OFF)
+      SELECT page_id
+      FROM docmost_mcp_chunks
+      WHERE workspace_id = ${workspaceId}::uuid
+        AND page_id = ${scopedPageId}::uuid
+        AND embedding_model = ${MIGRATION_REHEARSAL_EMBEDDING_MODEL}
+        AND deleted_at IS NULL
+      ORDER BY embedding <=> ${queryVector}
+      LIMIT 8
+    `.execute(trx);
+    const planText = plan.rows
+      .map((row) => String(Object.values(row)[0] ?? ''))
+      .join('\n');
+    assert.match(
+      planText,
+      /idx_docmost_mcp_chunks_embedding_hnsw/,
+      `Filtered vector query did not use the HNSW index:\n${planText}`,
+    );
+
+    const result = await sql<{ pageId: string; distance: number }>`
+      SELECT
+        page_id::text AS "pageId",
+        embedding <=> ${queryVector} AS distance
+      FROM docmost_mcp_chunks
+      WHERE workspace_id = ${workspaceId}::uuid
+        AND page_id = ${scopedPageId}::uuid
+        AND embedding_model = ${MIGRATION_REHEARSAL_EMBEDDING_MODEL}
+        AND deleted_at IS NULL
+      ORDER BY embedding <=> ${queryVector}
+      LIMIT 8
+    `.execute(trx);
+    assert.equal(result.rows.length, 8);
+    assert(
+      result.rows.every((row) => row.pageId === scopedPageId),
+      'Filtered HNSW query returned a chunk outside the requested page scope',
+    );
+    for (let index = 1; index < result.rows.length; index += 1) {
+      assert(
+        result.rows[index - 1].distance <= result.rows[index].distance,
+        'Filtered HNSW results are not in strict distance order',
+      );
+    }
+  });
 }
 
 async function getTableNames(

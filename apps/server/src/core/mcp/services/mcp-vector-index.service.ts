@@ -70,20 +70,43 @@ type EnqueuePageOptions = {
 
 export const AUTO_INDEX_DELAY_MS = 1000;
 const MAX_BATCH_INDEX_LIMIT = 1000;
+export const MINIMUM_PGVECTOR_VERSION = '0.8.0';
 
 export function buildEmbeddingDimensionContractQuery(db: KyselyDB) {
   return db
     .selectFrom(
-      sql<{ declaredType: string | null }>`(
-        SELECT format_type(attribute.atttypid, attribute.atttypmod) AS declared_type
-        FROM pg_attribute AS attribute
-        WHERE attribute.attrelid = to_regclass('docmost_mcp_chunks')
-          AND attribute.attname = 'embedding'
-          AND attribute.attnum > 0
-          AND NOT attribute.attisdropped
-      )`.as('vectorDimensionContract'),
+      sql<{
+        declaredType: string | null;
+        pgvectorVersion: string | null;
+      }>`(
+        SELECT
+          (
+            SELECT format_type(attribute.atttypid, attribute.atttypmod)
+            FROM pg_attribute AS attribute
+            WHERE attribute.attrelid = to_regclass('docmost_mcp_chunks')
+              AND attribute.attname = 'embedding'
+              AND attribute.attnum > 0
+              AND NOT attribute.attisdropped
+          ) AS declared_type,
+          (
+            SELECT extension.extversion
+            FROM pg_extension AS extension
+            WHERE extension.extname = 'vector'
+          ) AS pgvector_version
+      )`.as('vectorRuntimeContract'),
     )
-    .select('declaredType');
+    .select(['declaredType', 'pgvectorVersion']);
+}
+
+export function isPgvectorVersionSupported(
+  version: string | null | undefined,
+): boolean {
+  const match = version?.match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
+  if (!match) return false;
+
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 0 || minor >= 8;
 }
 
 @Injectable()
@@ -1299,6 +1322,11 @@ export class McpVectorIndexService implements OnModuleInit {
     if (contract?.declaredType !== 'vector(1536)') {
       throw new Error(
         `docmost_mcp_chunks.embedding must be vector(1536), found ${contract?.declaredType ?? 'missing'}. Apply the matching database migration before enabling vector search.`,
+      );
+    }
+    if (!isPgvectorVersionSupported(contract.pgvectorVersion)) {
+      throw new Error(
+        `pgvector ${MINIMUM_PGVECTOR_VERSION} or newer is required for filtered vector search, found ${contract.pgvectorVersion ?? 'missing'}. Upgrade the vector extension before enabling vector search.`,
       );
     }
   }

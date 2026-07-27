@@ -370,7 +370,12 @@ export class PageRepo {
     });
   }
 
-  async getCreatedByPages(creatorId: string, requestingUserId: string, pagination: PaginationOptions, spaceId?: string) {
+  async getCreatedByPages(
+    creatorId: string,
+    requestingUserId: string,
+    pagination: PaginationOptions,
+    spaceId?: string,
+  ) {
     let query = this.db
       .selectFrom('pages')
       .select(this.baseFields)
@@ -381,7 +386,11 @@ export class PageRepo {
     if (spaceId) {
       query = query.where('spaceId', '=', spaceId);
     } else {
-      query = query.where('spaceId', 'in', this.spaceMemberRepo.getUserSpaceIdsQuery(requestingUserId));
+      query = query.where(
+        'spaceId',
+        'in',
+        this.spaceMemberRepo.getUserSpaceIdsQuery(requestingUserId),
+      );
     }
 
     return executeWithCursorPagination(query, {
@@ -550,6 +559,48 @@ export class PageRepo {
       )
       .selectFrom('page_hierarchy')
       .selectAll()
+      .execute();
+  }
+
+  async getPageAndDescendantIds(
+    parentPageId: string,
+    opts: { limit: number },
+  ): Promise<
+    Array<{
+      id: string;
+      spaceId: string;
+      workspaceId: string;
+    }>
+  > {
+    return this.db
+      .withRecursive('page_hierarchy', (db) =>
+        db
+          .selectFrom('pages')
+          .select(['id', 'parentPageId', 'spaceId', 'workspaceId'])
+          .where('id', '=', parentPageId)
+          .where('deletedAt', 'is', null)
+          .unionAll((exp) =>
+            exp
+              .selectFrom('pages as child')
+              .select([
+                'child.id',
+                'child.parentPageId',
+                'child.spaceId',
+                'child.workspaceId',
+              ])
+              .innerJoin(
+                'page_hierarchy as parent',
+                'child.parentPageId',
+                'parent.id',
+              )
+              .whereRef('child.workspaceId', '=', 'parent.workspaceId')
+              .whereRef('child.spaceId', '=', 'parent.spaceId')
+              .where('child.deletedAt', 'is', null),
+          ),
+      )
+      .selectFrom('page_hierarchy')
+      .select(['id', 'spaceId', 'workspaceId'])
+      .limit(opts.limit)
       .execute();
   }
 

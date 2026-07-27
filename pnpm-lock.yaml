@@ -249,6 +249,9 @@ importers:
       concurrently:
         specifier: 9.2.3
         version: 9.2.3
+      jsonc-parser:
+        specifier: 3.3.1
+        version: 3.3.1
       nx:
         specifier: 22.6.1
         version: 22.6.1

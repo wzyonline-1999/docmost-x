@@ -12,15 +12,19 @@ const serviceMocks = vi.hoisted(() => ({
   searchShare: vi.fn(),
   searchSuggestions: vi.fn(),
 }));
+const featureMocks = vi.hoisted(() => ({
+  hasFeature: false,
+}));
 
 vi.mock("@/features/search/services/search-service", () => serviceMocks);
 vi.mock("@/oss/hooks/use-feature", () => ({
-  useHasFeature: () => false,
+  useHasFeature: () => featureMocks.hasFeature,
 }));
 
 describe("search query cache boundaries", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    featureMocks.hasFeature = false;
   });
 
   it("uses suggestion filters as part of the query key", async () => {
@@ -117,6 +121,30 @@ describe("search query cache boundaries", () => {
         id: "page-from-second-scope",
       });
     });
+  });
+
+  it("does not send a page directory scope to attachment search", async () => {
+    featureMocks.hasFeature = true;
+    serviceMocks.searchAttachments.mockResolvedValue([]);
+    const { wrapper } = queryWrapper();
+    const { result } = renderHook(
+      () =>
+        useUnifiedSearch({
+          query: "report",
+          contentType: "attachment",
+          rootPageId: "page-root",
+          spaceId: "space-1",
+          mode: "semantic",
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(serviceMocks.searchAttachments).toHaveBeenCalledWith({
+      query: "report",
+      spaceId: "space-1",
+    });
+    expect(serviceMocks.searchPagesAdvanced).not.toHaveBeenCalled();
   });
 });
 

@@ -8,6 +8,8 @@ Docmost server process; this release does not require a second worker image.
 ## Required state
 
 - Use a direct or session-mode PostgreSQL connection for migrations.
+- PostgreSQL must have `pgvector` 0.8.0 or newer. Application startup rejects
+  older versions because filtered HNSW retrieval depends on iterative scans.
 - The application role must have `search_path=docmost` and ownership or DDL
   rights in that schema.
 - Do not expose `docmost` through the Supabase Data API. `anon`,
@@ -35,10 +37,17 @@ EMBEDDING_BASE_URL=https://api.openai.com/v1
 EMBEDDING_API_KEY=<vault-secret>
 EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_DIMENSIONS=1536
+VECTOR_EXACT_CHUNK_THRESHOLD=4000
 ```
 
 `EMBEDDING_DIMENSIONS` is fixed at 1536 in this release. Changing it requires a
 new database migration and a complete vector reindex.
+
+`VECTOR_EXACT_CHUNK_THRESHOLD` selects an exact vector scan when the requested
+directory contains no more than that many active chunks for the configured
+embedding model. Larger scopes use filtered HNSW retrieval. During upgrades,
+the deprecated `VECTOR_EXACT_PAGE_THRESHOLD` is interpreted as ten chunks per
+page when the new setting is absent.
 
 ## Build and boot
 
@@ -91,8 +100,8 @@ attachment characters per page.
 1. Boot with `MCP_ENABLED=false` and `VECTOR_SEARCH_ENABLED=false`.
 2. Set `MCP_ENABLED=true`, restart Docmost, and test keyword-only tools with a
    dedicated actor and a non-sensitive test space.
-3. Set `VECTOR_SEARCH_ENABLED=true` only after the embedding provider and
-   `vector(1536)` startup checks pass.
+3. Set `VECTOR_SEARCH_ENABLED=true` only after the embedding provider,
+   `vector(1536)`, and `pgvector >= 0.8.0` startup checks pass.
 4. Grant `canIndex` and `canSemanticSearch` to one test space. Leave all other
    spaces denied by default.
 5. Observe MCP error rate, p95 latency, audit failures, queue backlog, provider
@@ -111,11 +120,15 @@ The fast rollback does not touch data:
 3. Restore the previous immutable image tag and verify `/api/health`.
 
 Only roll back database migrations after a fresh schema backup and after the
-old application image is stopped. The six MCP migrations are reversible in
-reverse timestamp order. Rolling back the base MCP migration drops MCP clients,
-permissions, audit rows, idempotency rows, jobs, and vector chunks; those vector
-rows must be rebuilt after reapplying migrations. Normal Docmost tables are not
-removed by the rollback, as verified by `test:mcp:migrations`.
+old application image is stopped. The migration rehearsal rolls back all seven
+MCP migrations in reverse timestamp order. The newest ownership-hardening
+migration intentionally does not undo its fail-closed data repair: a repaired
+personal client stays bound to its owner and a token disabled by that repair is
+not silently reactivated. Rolling back the base MCP migration drops MCP
+clients, permissions, audit rows, idempotency rows, jobs, and vector chunks;
+those vector rows must be rebuilt after reapplying migrations. Normal Docmost
+tables are not removed by the rollback, as verified by
+`test:mcp:migrations`.
 
 ## Supabase exposure check
 

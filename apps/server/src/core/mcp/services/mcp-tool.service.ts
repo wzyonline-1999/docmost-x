@@ -1017,6 +1017,7 @@ export class McpToolService {
         limit,
         searchSpaceIds,
         actor,
+        scopedPageIds,
       );
     } catch (err) {
       warnings.push(
@@ -1974,6 +1975,7 @@ export class McpToolService {
     limit: number,
     requiredSearchSpaceIds?: string[],
     actor?: User,
+    preResolvedScopedPageIds?: string[],
   ): Promise<SearchItem[]> {
     const query = this.requireQuery(args);
     const requestedSpaceIds = this.optionalStringArray(args, 'spaceIds');
@@ -1998,12 +2000,14 @@ export class McpToolService {
       return [];
     }
 
-    const scopedPageIds = await this.resolveSearchRootPageIds(
-      args,
-      context,
-      resolvedActor,
-      spaceIds,
-    );
+    const scopedPageIds =
+      preResolvedScopedPageIds ??
+      (await this.resolveSearchRootPageIds(
+        args,
+        context,
+        resolvedActor,
+        spaceIds,
+      ));
     if (scopedPageIds?.length === 0) {
       return [];
     }
@@ -2043,7 +2047,12 @@ export class McpToolService {
       );
 
     let semanticItems: SearchItem[];
-    if (this.shouldUseExactVectorSearch(scopedPageIds)) {
+    if (
+      await this.shouldUseExactVectorSearch(
+        context.client.workspaceId,
+        scopedPageIds,
+      )
+    ) {
       let bestChunksQuery = this.db
         .selectFrom('docmostMcpChunks as chunks')
         .innerJoin('pages', (join) =>
@@ -2202,12 +2211,34 @@ export class McpToolService {
     return scope.pageIds;
   }
 
-  private shouldUseExactVectorSearch(scopedPageIds?: string[]): boolean {
+  private async shouldUseExactVectorSearch(
+    workspaceId: string,
+    scopedPageIds?: string[],
+  ): Promise<boolean> {
+    if (scopedPageIds === undefined) {
+      return false;
+    }
+
     const threshold = Math.max(
       1,
-      this.environmentService.getVectorExactPageThreshold?.() ?? 400,
+      this.environmentService.getVectorExactChunkThreshold?.() ?? 4000,
     );
-    return scopedPageIds !== undefined && scopedPageIds.length <= threshold;
+    const overflowChunk = await this.db
+      .selectFrom('docmostMcpChunks as chunks')
+      .select('chunks.id')
+      .where('chunks.workspaceId', '=', workspaceId)
+      .where(
+        'chunks.embeddingModel',
+        '=',
+        this.environmentService.getEmbeddingModel(),
+      )
+      .where('chunks.deletedAt', 'is', null)
+      .where(sql<boolean>`chunks.page_id = ANY(${scopedPageIds}::uuid[])`)
+      .limit(1)
+      .offset(threshold)
+      .executeTakeFirst();
+
+    return !overflowChunk;
   }
 
   private getVectorAnnMaxCandidates(): number {

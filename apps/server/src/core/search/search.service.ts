@@ -29,6 +29,7 @@ import { KyselyTransaction } from '@docmost/db/types/kysely.types';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const tsquery = require('pg-tsquery')();
+const HYBRID_RANK_CONSTANT = 10;
 
 type SearchOptions = {
   userId?: string;
@@ -155,6 +156,7 @@ export class SearchService {
       )
       .where('deletedAt', 'is', null)
       .orderBy('rank', 'desc')
+      .orderBy('pages.id', 'asc')
       .limit(searchParams.limit || 25)
       .offset(searchParams.offset || 0);
 
@@ -394,7 +396,9 @@ export class SearchService {
         };
       });
 
-    if (this.shouldUseExactVectorSearch(scopedPageIds)) {
+    if (
+      await this.shouldUseExactVectorSearch(opts.workspaceId, scopedPageIds)
+    ) {
       const bestChunks = this.db
         .selectFrom('docmostMcpChunks as chunks')
         .innerJoin('pages', (join) =>
@@ -456,6 +460,7 @@ export class SearchService {
         .where('pages.spaceId', 'in', spaceIds)
         .where('pages.deletedAt', 'is', null)
         .orderBy('bestChunks.score', 'desc')
+        .orderBy('pages.id', 'asc')
         .limit(limit)
         .offset(offset)
         .execute();
@@ -526,7 +531,9 @@ export class SearchService {
           }
         }
         dedupedRows = [...byPageId.values()].sort(
-          (left, right) => Number(right.rank) - Number(left.rank),
+          (left, right) =>
+            Number(right.rank) - Number(left.rank) ||
+            left.id.localeCompare(right.id),
         );
 
         if (
@@ -574,12 +581,34 @@ export class SearchService {
     return scope.pageIds;
   }
 
-  private shouldUseExactVectorSearch(scopedPageIds?: string[]): boolean {
+  private async shouldUseExactVectorSearch(
+    workspaceId: string,
+    scopedPageIds?: string[],
+  ): Promise<boolean> {
+    if (scopedPageIds === undefined) {
+      return false;
+    }
+
     const threshold = Math.max(
       1,
-      this.environmentService.getVectorExactPageThreshold?.() ?? 400,
+      this.environmentService.getVectorExactChunkThreshold?.() ?? 4000,
     );
-    return scopedPageIds !== undefined && scopedPageIds.length <= threshold;
+    const overflowChunk = await this.db
+      .selectFrom('docmostMcpChunks as chunks')
+      .select('chunks.id')
+      .where('chunks.workspaceId', '=', workspaceId)
+      .where(
+        'chunks.embeddingModel',
+        '=',
+        this.environmentService.getEmbeddingModel(),
+      )
+      .where('chunks.deletedAt', 'is', null)
+      .where(sql<boolean>`chunks.page_id = ANY(${scopedPageIds}::uuid[])`)
+      .limit(1)
+      .offset(threshold)
+      .executeTakeFirst();
+
+    return !overflowChunk;
   }
 
   private getVectorAnnMaxCandidates(): number {
@@ -614,8 +643,16 @@ export class SearchService {
     requestedLimit: number,
   ): SearchResponseDto[] {
     const limit = Math.min(Math.max(requestedLimit, 1), 1000);
-    const normalizedKeyword = this.normalizeScores(keywordItems);
-    const normalizedSemantic = this.normalizeScores(semanticItems);
+    const weights = this.getHybridWeights();
+    const relevanceWeightTotal = weights.keyword + weights.semantic;
+    const keywordScores = this.buildStableRankScores(
+      keywordItems,
+      relevanceWeightTotal > 0 ? weights.keyword / relevanceWeightTotal : 0.5,
+    );
+    const semanticScores = this.buildStableRankScores(
+      semanticItems,
+      relevanceWeightTotal > 0 ? weights.semantic / relevanceWeightTotal : 0.5,
+    );
     const keywordIds = new Set(keywordItems.map((item) => item.id));
     const semanticIds = new Set(semanticItems.map((item) => item.id));
     const byPageId = new Map<string, SearchResponseDto>();
@@ -637,14 +674,15 @@ export class SearchService {
       }
     }
 
-    const weights = this.getHybridWeights();
     for (const item of byPageId.values()) {
-      const keywordScore = normalizedKeyword.get(item.id) ?? 0;
-      const semanticScore = normalizedSemantic.get(item.id) ?? 0;
+      const keywordScore = keywordScores.get(item.id) ?? 0;
+      const semanticScore = semanticScores.get(item.id) ?? 0;
       const recencyScore = this.getRecencyScore(item.updatedAt);
+      // Stable source ranks avoid prefix normalization drift. CombMAX prevents
+      // late overlap from double-counting relevance, while recency remains a
+      // prefix-independent configured component.
       const final =
-        keywordScore * weights.keyword +
-        semanticScore * weights.semantic +
+        Math.max(keywordScore, semanticScore) * relevanceWeightTotal +
         recencyScore * weights.recency;
       item.source =
         keywordIds.has(item.id) && semanticIds.has(item.id)
@@ -662,29 +700,27 @@ export class SearchService {
     }
 
     return [...byPageId.values()]
-      .sort((left, right) => Number(right.rank) - Number(left.rank))
+      .sort(
+        (left, right) =>
+          Number(right.rank) - Number(left.rank) ||
+          Number(right.scores?.recency ?? 0) -
+            Number(left.scores?.recency ?? 0) ||
+          left.id.localeCompare(right.id),
+      )
       .slice(0, limit);
   }
 
-  private normalizeScores(items: SearchResponseDto[]): Map<string, number> {
-    const finiteScores = items
-      .map((item) => Number(item.rank))
-      .filter(Number.isFinite);
-    if (finiteScores.length === 0) return new Map();
-
-    const minimum = Math.min(...finiteScores);
-    const maximum = Math.max(...finiteScores);
+  private buildStableRankScores(
+    items: SearchResponseDto[],
+    sourceWeight: number,
+  ): Map<string, number> {
+    const safeWeight = Math.max(0.01, Math.min(sourceWeight, 1));
     return new Map(
-      items.flatMap((item) => {
-        const score = Number(item.rank);
-        if (!Number.isFinite(score)) return [];
-        return [
-          [
-            item.id,
-            maximum === minimum ? 1 : (score - minimum) / (maximum - minimum),
-          ],
-        ];
-      }),
+      items.map((item, index) => [
+        item.id,
+        (HYBRID_RANK_CONSTANT + 1) /
+          (HYBRID_RANK_CONSTANT + (index + 1) / safeWeight),
+      ]),
     );
   }
 

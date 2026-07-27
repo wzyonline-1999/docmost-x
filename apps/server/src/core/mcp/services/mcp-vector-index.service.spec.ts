@@ -8,6 +8,7 @@ import type { McpEmbeddingService } from './mcp-embedding.service';
 import type { McpVectorEligibilityService } from './mcp-vector-eligibility.service';
 import {
   buildEmbeddingDimensionContractQuery,
+  isPgvectorVersionSupported,
   McpVectorIndexService,
 } from './mcp-vector-index.service';
 import type { McpVectorTextService } from './mcp-vector-text.service';
@@ -136,6 +137,7 @@ describe('McpVectorIndexService permission eligibility', () => {
     attachmentSelectQuery.execute.mockResolvedValue([]);
     dimensionQuery.executeTakeFirst.mockResolvedValue({
       declaredType: 'vector(1536)',
+      pgvectorVersion: '0.8.1',
     });
     updateQuery.execute.mockResolvedValue(undefined);
     insertQuery.execute.mockResolvedValue(undefined);
@@ -248,6 +250,7 @@ describe('McpVectorIndexService permission eligibility', () => {
   it('rejects a database vector column with a mismatched typmod at startup', async () => {
     dimensionQuery.executeTakeFirst.mockResolvedValueOnce({
       declaredType: 'vector(3072)',
+      pgvectorVersion: '0.8.1',
     });
 
     await expect(service.onModuleInit()).rejects.toThrow(
@@ -272,7 +275,9 @@ describe('McpVectorIndexService permission eligibility', () => {
       ).compile();
 
       expect(compiled.sql).toContain('AS declared_type');
+      expect(compiled.sql).toContain('AS pgvector_version');
       expect(compiled.sql).toContain('select "declared_type"');
+      expect(compiled.sql).toContain('"pgvector_version"');
       expect(compiled.sql).not.toContain('AS "declaredType"');
     } finally {
       await compileDb.destroy();
@@ -286,6 +291,29 @@ describe('McpVectorIndexService permission eligibility', () => {
       'this release requires 1536',
     );
     expect(jobSelectQuery.execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects pgvector versions without iterative filtered scans', async () => {
+    dimensionQuery.executeTakeFirst.mockResolvedValueOnce({
+      declaredType: 'vector(1536)',
+      pgvectorVersion: '0.7.4',
+    });
+
+    await expect(service.onModuleInit()).rejects.toThrow(
+      'pgvector 0.8.0 or newer is required',
+    );
+    expect(jobSelectQuery.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['0.8.0', true],
+    ['0.8.1', true],
+    ['1.0.0', true],
+    ['0.7.4', false],
+    ['missing', false],
+    [null, false],
+  ])('validates pgvector version %p', (version, expected) => {
+    expect(isPgvectorVersionSupported(version)).toBe(expected);
   });
 
   it('uses a stable cursor and bases continuation on the scanned batch', async () => {

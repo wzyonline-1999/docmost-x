@@ -1477,13 +1477,30 @@ describe('McpToolService', () => {
         },
       ]),
     };
+    const chunkThresholdQuery = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      offset: jest.fn().mockReturnThis(),
+      executeTakeFirst: jest.fn().mockResolvedValue(undefined),
+    };
+    let chunkQueryCount = 0;
     const db = {
-      selectFrom: jest.fn(() => semanticQuery),
+      selectFrom: jest.fn((source) => {
+        if (source === 'docmostMcpChunks as chunks') {
+          chunkQueryCount += 1;
+          if (chunkQueryCount === 1) {
+            return chunkThresholdQuery;
+          }
+        }
+        return semanticQuery;
+      }),
     };
     const environmentService = {
       isVectorSearchEnabled: jest.fn(() => true),
       getMcpMaxQueryLength: jest.fn(() => 1000),
       getEmbeddingModel: jest.fn(() => 'test-embedding'),
+      getVectorExactChunkThreshold: jest.fn(() => 4000),
     };
     const embeddingService = {
       createEmbeddings: jest.fn().mockResolvedValue([[0.1, 0.2, 0.3]]),
@@ -1576,6 +1593,12 @@ describe('McpToolService', () => {
       userId: actor.id,
       allowedSpaceIds: [page.spaceId],
     });
+    expect(chunkThresholdQuery.where).toHaveBeenCalledWith(
+      'chunks.embeddingModel',
+      '=',
+      'test-embedding',
+    );
+    expect(chunkThresholdQuery.offset).toHaveBeenCalledWith(4000);
   });
 
   it.each([
@@ -1772,6 +1795,85 @@ describe('McpToolService', () => {
       items: [{ pageId: 'child-page' }],
       warnings: [],
     });
+  });
+
+  it('resolves the readable directory subtree once for MCP hybrid search', async () => {
+    const scopedPageIds = [page.id, 'child-page'];
+    const permissionService = {
+      getAllowedSpaceIds: jest.fn().mockResolvedValue([page.spaceId]),
+    };
+    const actorAccessService = {
+      requireActor: jest.fn().mockResolvedValue(actor),
+      filterReadableSpaceIds: jest.fn().mockResolvedValue([page.spaceId]),
+      filterReadablePageIds: jest.fn().mockResolvedValue(['child-page']),
+    };
+    const pageTreeScopeService = {
+      resolveReadableSubtree: jest.fn().mockResolvedValue({
+        spaceId: page.spaceId,
+        pageIds: scopedPageIds,
+      }),
+    };
+    const service = createService({
+      actorAccessService,
+      environmentService: {
+        getMcpMaxQueryLength: jest.fn(() => 500),
+        getVectorHybridKeywordWeight: jest.fn(() => 0.25),
+        getVectorHybridSemanticWeight: jest.fn(() => 0.65),
+        getVectorHybridRecencyWeight: jest.fn(() => 0.1),
+      },
+      pageTreeScopeService,
+      permissionService,
+    });
+    const item = {
+      pageId: 'child-page',
+      spaceId: page.spaceId,
+      title: 'Child page',
+      snippet: 'Scoped content',
+      updatedAt: new Date(),
+      scores: { keyword: 1, final: 1 },
+      source: 'keyword',
+      contentSource: { type: 'page' },
+    };
+    jest
+      .spyOn(
+        service as unknown as {
+          keywordSearch: (...args: unknown[]) => Promise<unknown[]>;
+        },
+        'keywordSearch',
+      )
+      .mockResolvedValue([item]);
+    const semanticSearch = jest
+      .spyOn(
+        service as unknown as {
+          semanticSearchItems: (...args: unknown[]) => Promise<unknown[]>;
+        },
+        'semanticSearchItems',
+      )
+      .mockResolvedValue([]);
+
+    await service.callTool(
+      {
+        name: 'search_docs',
+        arguments: {
+          query: 'scoped content',
+          mode: 'hybrid',
+          rootPageId: page.id,
+        },
+      },
+      context,
+    );
+
+    expect(pageTreeScopeService.resolveReadableSubtree).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(semanticSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ rootPageId: page.id }),
+      context,
+      10,
+      [page.spaceId],
+      actor,
+      scopedPageIds,
+    );
   });
 
   it.each([null, '', '   '])(

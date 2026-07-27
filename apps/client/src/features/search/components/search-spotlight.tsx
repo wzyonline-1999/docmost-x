@@ -81,12 +81,12 @@ export function SearchSpotlight({
     if (filters.spaceId) {
       params.spaceId = filters.spaceId;
     }
-    if (filters.rootPageId) {
+    if (!isAiMode && filters.contentType === "page" && filters.rootPageId) {
       params.rootPageId = filters.rootPageId;
     }
 
     return params;
-  }, [debouncedSearchQuery, filters]);
+  }, [debouncedSearchQuery, filters, isAiMode]);
 
   const {
     data: searchData,

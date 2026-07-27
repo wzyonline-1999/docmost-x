@@ -422,11 +422,24 @@ export class EnvironmentService {
     );
   }
 
-  getVectorExactPageThreshold(): number {
-    return parseInt(
-      this.configService.get<string>('VECTOR_EXACT_PAGE_THRESHOLD', '400'),
+  getVectorExactChunkThreshold(): number {
+    const configured = parseInt(
+      this.configService.get<string>('VECTOR_EXACT_CHUNK_THRESHOLD', ''),
       10,
     );
+    if (Number.isFinite(configured) && configured > 0) {
+      return configured;
+    }
+
+    const legacyPageThreshold = parseInt(
+      this.configService.get<string>('VECTOR_EXACT_PAGE_THRESHOLD', ''),
+      10,
+    );
+    if (Number.isFinite(legacyPageThreshold) && legacyPageThreshold > 0) {
+      return legacyPageThreshold * 10;
+    }
+
+    return 4000;
   }
 
   getVectorAnnCandidateMultiplier(): number {

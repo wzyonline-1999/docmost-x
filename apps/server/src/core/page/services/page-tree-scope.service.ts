@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  PayloadTooLargeException,
 } from '@nestjs/common';
 import { PagePermissionRepo } from '@docmost/db/repos/page/page-permission.repo';
 import { PageRepo } from '@docmost/db/repos/page/page.repo';
@@ -11,6 +12,8 @@ export type ReadablePageTreeScope = {
   spaceId: string;
   pageIds: string[];
 };
+
+export const MAX_SEARCH_DIRECTORY_PAGES = 10_000;
 
 @Injectable()
 export class PageTreeScopeService {
@@ -41,9 +44,17 @@ export class PageTreeScopeService {
       throw new NotFoundException('Search root page not found');
     }
 
-    const subtree = await this.pageRepo.getPageAndDescendants(opts.rootPageId, {
-      includeContent: false,
-    });
+    const subtree = await this.pageRepo.getPageAndDescendantIds(
+      opts.rootPageId,
+      {
+        limit: MAX_SEARCH_DIRECTORY_PAGES + 1,
+      },
+    );
+    if (subtree.length > MAX_SEARCH_DIRECTORY_PAGES) {
+      throw new PayloadTooLargeException(
+        `Directory search supports at most ${MAX_SEARCH_DIRECTORY_PAGES} pages`,
+      );
+    }
     const pageIds = subtree
       .filter(
         (page) =>

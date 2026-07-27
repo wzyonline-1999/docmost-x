@@ -454,20 +454,27 @@ Soft delete and restore are idempotent by page state.
 
 #### Branch Rules
 
-| Condition                          | Action                                                                                     |
-| ---------------------------------- | ------------------------------------------------------------------------------------------ |
-| No allowed spaces                  | Return empty result                                                                        |
-| Semantic provider unavailable      | For hybrid search, return full-text with warning; for semantic-only, return provider error |
-| Some spaces lack `semantic_search` | Exclude them from vector query                                                             |
-| Result page no longer exists       | Drop result                                                                                |
+| Condition                                                              | Action                                                                                     |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| No allowed spaces                                                      | Return empty result                                                                        |
+| Semantic provider unavailable                                          | For hybrid search, return full-text with warning; for semantic-only, return provider error |
+| Some spaces lack `semantic_search`                                     | Exclude them from vector query                                                             |
+| Result page no longer exists                                           | Drop result                                                                                |
+| Scoped active chunks are at or below `VECTOR_EXACT_CHUNK_THRESHOLD`    | Use an exact vector scan for deterministic filtered recall                                 |
+| Scoped active chunks exceed the threshold, or no directory is selected | Use filtered HNSW with iterative scan and bounded candidate expansion                      |
 
 #### Ranking Rule
 
-Default hybrid score:
+Web advanced search converts semantic and keyword order into stable rank scores,
+uses `CombMAX` to avoid double-counting pages that appear later in the other
+candidate prefix, then applies the configured relevance and recency weights.
+With defaults:
 
-- `0.65 * semantic_score + 0.25 * full_text_score + 0.10 * recency_score`
+- `relevance = CombMAX(0.65 / 0.90 semantic rank, 0.25 / 0.90 keyword rank)`
+- `final = 0.90 * relevance + 0.10 * recency_score`
 
-This ratio is configurable. The response exposes individual scores for debugging.
+The ratio is configurable. MCP hybrid search retains its weighted component
+fusion, and both responses expose individual scores for debugging.
 
 ## 5. Business Rules And State Transitions
 
@@ -916,15 +923,20 @@ Response:
 | `MCP_MAX_QUERY_LENGTH`          | Search query limit         | `1000`                   | Restart         | Avoid prompt abuse                                                                             |
 | `MCP_MAX_WRITE_CONTENT_LENGTH`  | Write content limit        | `200000`                 | Restart         | Protect server                                                                                 |
 | `MCP_READ_AUDIT_SAMPLE_RATE`    | Read audit sample          | `0`                      | Restart         | Writes always audited                                                                          |
-| `VECTOR_SEARCH_ENABLED`         | Enable semantic search     | `true`                   | Restart         | Can disable during incident                                                                    |
+| `VECTOR_SEARCH_ENABLED`         | Enable semantic search     | `false`                  | Restart         | Fail closed by default; also requires MCP                                                      |
 | `EMBEDDING_BASE_URL`            | OpenAI-compatible endpoint | required                 | Restart         | Supports proxy/local                                                                           |
 | `EMBEDDING_API_KEY`             | Embedding API key          | required                 | Restart         | Secret                                                                                         |
 | `EMBEDDING_MODEL`               | Embedding model            | `text-embedding-3-small` | Restart         | Configurable                                                                                   |
 | `EMBEDDING_DIMENSIONS`          | Vector dimensions          | `1536`                   | Restart         | Phase 1 is fixed to `1536`; other values require an explicit schema migration and full reindex |
 | `EMBEDDING_BATCH_SIZE`          | Batch size                 | `32`                     | Restart         | Tune provider load                                                                             |
-| `VECTOR_CHUNK_MAX_CHARS`        | Chunk size                 | `3000`                   | Restart         | Approx token budget                                                                            |
+| `VECTOR_CHUNK_MAX_CHARS`        | Chunk size                 | `4000`                   | Restart         | Approx token budget                                                                            |
 | `VECTOR_CHUNK_OVERLAP_CHARS`    | Chunk overlap              | `300`                    | Restart         | Improve recall                                                                                 |
 | `VECTOR_HYBRID_SEMANTIC_WEIGHT` | Hybrid ranking weight      | `0.65`                   | Restart         | Tune later                                                                                     |
+| `VECTOR_EXACT_CHUNK_THRESHOLD`  | Exact-scan chunk limit     | `4000`                   | Restart         | Counts active chunks for the current workspace, model, and directory page set                  |
+
+Filtered HNSW retrieval requires `pgvector` 0.8.0 or newer. The application
+checks both that version and the `vector(1536)` column contract before vector
+search starts.
 
 ### 8.2 Cache
 

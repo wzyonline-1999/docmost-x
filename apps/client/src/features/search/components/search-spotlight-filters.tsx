@@ -129,6 +129,8 @@ export function SearchSpotlightFilters({
     let newSelectedSpaceId = selectedSpaceId;
     let newContentType = contentType;
     let newSearchMode = searchMode;
+    let newRootPageId = rootPageId;
+    let newRootPageTitle = rootPageTitle;
 
     switch (filterType) {
       case "spaceId":
@@ -138,6 +140,14 @@ export function SearchSpotlightFilters({
       case "contentType":
         newContentType = value;
         setContentType(value);
+        if (value === "attachment") {
+          newRootPageId = undefined;
+          newRootPageTitle = undefined;
+          setRootPageId(undefined);
+          setRootPageTitle(undefined);
+          setScopeOpened(false);
+          setDirectoryQuery("");
+        }
         break;
       case "searchMode":
         newSearchMode = value;
@@ -150,10 +160,30 @@ export function SearchSpotlightFilters({
         spaceId: newSelectedSpaceId,
         contentType: newContentType,
         searchMode: newSearchMode,
-        rootPageId,
-        rootPageTitle,
+        rootPageId: newRootPageId,
+        rootPageTitle: newRootPageTitle,
       });
     }
+  };
+
+  const handleAiModeToggle = () => {
+    if (!isAiMode) {
+      setScopeOpened(false);
+      setDirectoryQuery("");
+
+      if (contentType === "attachment") {
+        setContentType("page");
+        onFiltersChange?.({
+          spaceId: selectedSpaceId,
+          contentType: "page",
+          searchMode,
+          rootPageId,
+          rootPageTitle,
+        });
+      }
+    }
+
+    onAskClick?.();
   };
 
   const handleScopeSelect = (page?: Partial<IPage>) => {
@@ -192,7 +222,7 @@ export function SearchSpotlightFilters({
         >
           <Switch
             checked={isAiMode}
-            onChange={(event) => onAskClick()}
+            onChange={handleAiModeToggle}
             label={t("AI Answers")}
             size="sm"
             color="blue"
@@ -232,100 +262,102 @@ export function SearchSpotlightFilters({
         </Button>
       </SpaceFilterMenu>
 
-      <Popover
-        opened={scopeOpened}
-        onChange={setScopeOpened}
-        position="bottom-start"
-        width={340}
-        shadow="md"
-        trapFocus
-        zIndex={getDefaultZIndex("max")}
-      >
-        <Popover.Target>
-          <Button
-            variant="subtle"
-            color="gray"
-            size="sm"
-            rightSection={<IconChevronDown size={14} />}
-            leftSection={<IconFolderSearch size={16} />}
-            className={classes.filterButton}
-            fw={500}
-            onClick={() => setScopeOpened((opened) => !opened)}
-          >
-            {rootPageId
-              ? `${t("Directory")}: ${rootPageTitle || t("Untitled")}`
-              : `${t("Scope")}: ${t("Entire knowledge base")}`}
-          </Button>
-        </Popover.Target>
-        <Popover.Dropdown>
-          <Button
-            variant={!rootPageId ? "light" : "subtle"}
-            color="gray"
-            fullWidth
-            justify="flex-start"
-            leftSection={<IconFolders size={16} />}
-            onClick={() => handleScopeSelect()}
-          >
-            {t("Entire knowledge base")}
-          </Button>
-          <Button
-            mt={4}
-            variant={rootPageId === currentPage?.id ? "light" : "subtle"}
-            color="gray"
-            fullWidth
-            justify="flex-start"
-            leftSection={<IconCurrentLocation size={16} />}
-            disabled={!currentPage?.id}
-            onClick={() => handleScopeSelect(currentPage)}
-          >
-            {t("Current directory")}
-          </Button>
+      {contentType === "page" && !isAiMode && (
+        <Popover
+          opened={scopeOpened}
+          onChange={setScopeOpened}
+          position="bottom-start"
+          width={340}
+          shadow="md"
+          trapFocus
+          zIndex={getDefaultZIndex("max")}
+        >
+          <Popover.Target>
+            <Button
+              variant="subtle"
+              color="gray"
+              size="sm"
+              rightSection={<IconChevronDown size={14} />}
+              leftSection={<IconFolderSearch size={16} />}
+              className={classes.filterButton}
+              fw={500}
+              onClick={() => setScopeOpened((opened) => !opened)}
+            >
+              {rootPageId
+                ? `${t("Directory")}: ${rootPageTitle || t("Untitled")}`
+                : `${t("Scope")}: ${t("Entire knowledge base")}`}
+            </Button>
+          </Popover.Target>
+          <Popover.Dropdown>
+            <Button
+              variant={!rootPageId ? "light" : "subtle"}
+              color="gray"
+              fullWidth
+              justify="flex-start"
+              leftSection={<IconFolders size={16} />}
+              onClick={() => handleScopeSelect()}
+            >
+              {t("Entire knowledge base")}
+            </Button>
+            <Button
+              mt={4}
+              variant={rootPageId === currentPage?.id ? "light" : "subtle"}
+              color="gray"
+              fullWidth
+              justify="flex-start"
+              leftSection={<IconCurrentLocation size={16} />}
+              disabled={!currentPage?.id}
+              onClick={() => handleScopeSelect(currentPage)}
+            >
+              {t("Current directory")}
+            </Button>
 
-          <Divider my="sm" label={t("Choose directory")} />
-          <TextInput
-            value={directoryQuery}
-            onChange={(event) => setDirectoryQuery(event.currentTarget.value)}
-            placeholder={t("Search pages...")}
-            aria-label={t("Choose directory")}
-            leftSection={<IconSearch size={15} />}
-            rightSection={
-              isDirectorySearchFetching ? <Loader size={14} /> : undefined
-            }
-          />
-          {directoryQuery.trim().length >= 2 && (
-            <ScrollArea.Autosize mah={220} mt="xs" offsetScrollbars>
-              {directoryPages.length > 0
-                ? directoryPages.map((page) => (
-                    <Button
-                      key={page.id}
-                      variant="subtle"
-                      color="gray"
-                      fullWidth
-                      justify="flex-start"
-                      leftSection={<IconFileDescription size={15} />}
-                      onClick={() => handleScopeSelect(page)}
-                    >
-                      <div style={{ minWidth: 0, textAlign: "left" }}>
-                        <Text size="sm" truncate>
-                          {page.title || t("Untitled")}
-                        </Text>
-                        {page.space?.name && (
-                          <Text size="xs" c="dimmed" truncate>
-                            {page.space.name}
+            <Divider my="sm" label={t("Choose directory")} />
+            <TextInput
+              value={directoryQuery}
+              onChange={(event) => setDirectoryQuery(event.currentTarget.value)}
+              placeholder={t("Search pages...")}
+              aria-label={t("Choose directory")}
+              leftSection={<IconSearch size={15} />}
+              rightSection={
+                isDirectorySearchFetching ? <Loader size={14} /> : undefined
+              }
+            />
+            {directoryQuery.trim().length >= 2 && (
+              <ScrollArea.Autosize mah={220} mt="xs" offsetScrollbars>
+                {directoryPages.length > 0
+                  ? directoryPages.map((page) => (
+                      <Button
+                        key={page.id}
+                        variant="subtle"
+                        color="gray"
+                        fullWidth
+                        justify="flex-start"
+                        leftSection={<IconFileDescription size={15} />}
+                        onClick={() => handleScopeSelect(page)}
+                      >
+                        <div style={{ minWidth: 0, textAlign: "left" }}>
+                          <Text size="sm" truncate>
+                            {page.title || t("Untitled")}
                           </Text>
-                        )}
-                      </div>
-                    </Button>
-                  ))
-                : !isDirectorySearchFetching && (
-                    <Text size="sm" c="dimmed" py="sm" ta="center">
-                      {t("No pages found")}
-                    </Text>
-                  )}
-            </ScrollArea.Autosize>
-          )}
-        </Popover.Dropdown>
-      </Popover>
+                          {page.space?.name && (
+                            <Text size="xs" c="dimmed" truncate>
+                              {page.space.name}
+                            </Text>
+                          )}
+                        </div>
+                      </Button>
+                    ))
+                  : !isDirectorySearchFetching && (
+                      <Text size="sm" c="dimmed" py="sm" ta="center">
+                        {t("No pages found")}
+                      </Text>
+                    )}
+              </ScrollArea.Autosize>
+            )}
+          </Popover.Dropdown>
+        </Popover>
+      )}
 
       <Menu
         shadow="md"

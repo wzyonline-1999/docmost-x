@@ -36,22 +36,31 @@ export function useUnifiedSearch(
   const isAttachmentSearch =
     params.contentType === "attachment" && hasAttachmentIndexing;
   const searchType = isAttachmentSearch ? "attachment" : "page";
+  const {
+    contentType: _contentType,
+    mode,
+    rootPageId,
+    ...backendParams
+  } = params;
+  const attachmentParams = backendParams;
+  const pageParams = {
+    ...backendParams,
+    ...(rootPageId === undefined ? {} : { rootPageId }),
+    mode: mode ?? "hybrid",
+  };
+  const queryParams = isAttachmentSearch ? attachmentParams : pageParams;
 
   return useQuery({
-    queryKey: ["unified-search", searchType, params],
+    queryKey: ["unified-search", searchType, queryParams],
     queryFn: async () => {
-      // Remove contentType from backend params since it's only used for frontend routing
-      const { contentType: _contentType, mode, ...backendParams } = params;
-
       if (isAttachmentSearch) {
         return {
-          items: await searchAttachments(backendParams),
+          items: await searchAttachments(attachmentParams),
         };
       } else {
-        return (await searchPagesAdvanced({
-          ...backendParams,
-          mode: mode ?? "hybrid",
-        })) satisfies IAdvancedPageSearchResponse;
+        return (await searchPagesAdvanced(
+          pageParams,
+        )) satisfies IAdvancedPageSearchResponse;
       }
     },
     enabled: !!params.query && enabled,

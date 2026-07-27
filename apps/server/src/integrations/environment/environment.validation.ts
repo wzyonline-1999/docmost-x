@@ -215,6 +215,10 @@ export class EnvironmentVariables {
 
   @IsOptional()
   @IsNumberString()
+  VECTOR_EXACT_CHUNK_THRESHOLD: string;
+
+  @IsOptional()
+  @IsNumberString()
   VECTOR_ANN_CANDIDATE_MULTIPLIER: string;
 
   @IsOptional()

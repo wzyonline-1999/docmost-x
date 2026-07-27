@@ -1,5 +1,12 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { PageTreeScopeService } from './page-tree-scope.service';
+import {
+  BadRequestException,
+  NotFoundException,
+  PayloadTooLargeException,
+} from '@nestjs/common';
+import {
+  MAX_SEARCH_DIRECTORY_PAGES,
+  PageTreeScopeService,
+} from './page-tree-scope.service';
 
 describe('PageTreeScopeService', () => {
   const rootPageId = '11111111-1111-4111-8111-111111111111';
@@ -11,7 +18,7 @@ describe('PageTreeScopeService', () => {
 
   const pageRepo = {
     findById: jest.fn(),
-    getPageAndDescendants: jest.fn(),
+    getPageAndDescendantIds: jest.fn(),
   };
   const pagePermissionRepo = {
     filterAccessiblePageIds: jest.fn(),
@@ -30,7 +37,7 @@ describe('PageTreeScopeService', () => {
       workspaceId,
       deletedAt: null,
     });
-    pageRepo.getPageAndDescendants.mockResolvedValue([
+    pageRepo.getPageAndDescendantIds.mockResolvedValue([
       { id: rootPageId, spaceId, workspaceId },
       { id: childPageId, spaceId, workspaceId },
       { id: restrictedPageId, spaceId, workspaceId },
@@ -61,7 +68,7 @@ describe('PageTreeScopeService', () => {
   });
 
   it('does not cross workspace or space boundaries in a malformed tree', async () => {
-    pageRepo.getPageAndDescendants.mockResolvedValue([
+    pageRepo.getPageAndDescendantIds.mockResolvedValue([
       { id: rootPageId, spaceId, workspaceId },
       {
         id: childPageId,
@@ -100,7 +107,7 @@ describe('PageTreeScopeService', () => {
       }),
     ).rejects.toBeInstanceOf(NotFoundException);
 
-    expect(pageRepo.getPageAndDescendants).not.toHaveBeenCalled();
+    expect(pageRepo.getPageAndDescendantIds).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -134,7 +141,7 @@ describe('PageTreeScopeService', () => {
       }),
     ).rejects.toBeInstanceOf(NotFoundException);
 
-    expect(pageRepo.getPageAndDescendants).not.toHaveBeenCalled();
+    expect(pageRepo.getPageAndDescendantIds).not.toHaveBeenCalled();
   });
 
   it('rejects a root that is not readable by the actor', async () => {
@@ -172,7 +179,7 @@ describe('PageTreeScopeService', () => {
       spaceId,
       workspaceId,
     }));
-    pageRepo.getPageAndDescendants.mockResolvedValue(pages);
+    pageRepo.getPageAndDescendantIds.mockResolvedValue(pages);
     pagePermissionRepo.filterAccessiblePageIds.mockResolvedValue(
       pages.map((page) => page.id),
     );
@@ -185,5 +192,28 @@ describe('PageTreeScopeService', () => {
     });
 
     expect(result.pageIds).toHaveLength(1_501);
+  });
+
+  it('rejects an oversized directory instead of truncating its scope', async () => {
+    pageRepo.getPageAndDescendantIds.mockResolvedValue(
+      Array.from({ length: MAX_SEARCH_DIRECTORY_PAGES + 1 }, (_, index) => ({
+        id:
+          index === 0
+            ? rootPageId
+            : `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+        spaceId,
+        workspaceId,
+      })),
+    );
+
+    await expect(
+      service.resolveReadableSubtree({
+        rootPageId,
+        workspaceId,
+        userId,
+        allowedSpaceIds: [spaceId],
+      }),
+    ).rejects.toBeInstanceOf(PayloadTooLargeException);
+    expect(pagePermissionRepo.filterAccessiblePageIds).not.toHaveBeenCalled();
   });
 });
