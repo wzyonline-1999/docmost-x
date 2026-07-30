@@ -242,7 +242,7 @@ describe('McpIdempotencyService', () => {
     await service.run(createInput(run));
 
     await expect(service.run(createInput(run, { title: 'B' }))).rejects.toThrow(
-      'Idempotency key was already used with a different request',
+      'Reuse a key only for an exact retry',
     );
     expect(run).toHaveBeenCalledTimes(1);
   });

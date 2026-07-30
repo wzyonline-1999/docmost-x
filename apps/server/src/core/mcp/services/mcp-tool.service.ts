@@ -1,6 +1,7 @@
 import {
   BadGatewayException,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -154,12 +155,17 @@ export class McpToolService {
       },
       {
         name: 'list_pages',
-        description: 'List pages in one allowed space.',
+        description:
+          'List the immediate children of one allowed space or parent page. Omit parentPageId for root pages; when search permission is available, use search_docs in keyword mode to locate a page by name without walking the tree.',
         inputSchema: {
           type: 'object',
           properties: {
             spaceId: { type: 'string' },
-            parentPageId: { type: ['string', 'null'] },
+            parentPageId: {
+              type: ['string', 'null'],
+              description:
+                'Parent page UUID. Omit or pass null to list only root pages.',
+            },
             limit: { type: 'number', minimum: 1, maximum: MAX_LIST_LIMIT },
             offset: { type: 'number', minimum: 0 },
           },
@@ -356,7 +362,8 @@ export class McpToolService {
       },
       {
         name: 'create_page',
-        description: 'Create a Docmost page in a space with create permission.',
+        description:
+          'Create a Docmost page in a space with create permission. Search first to avoid duplicates, then read the created page back when exact Markdown fidelity matters.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -374,7 +381,8 @@ export class McpToolService {
       },
       {
         name: 'update_page',
-        description: 'Update page title, icon, or replacement content.',
+        description:
+          'Replace a page title, icon, or content with optimistic concurrency protection. Read the page immediately before updating and read content back after success to verify Markdown fidelity. On a conflict, read it again, reconcile the change, and use the new updatedAt plus a new idempotencyKey.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -392,7 +400,8 @@ export class McpToolService {
       },
       {
         name: 'append_page',
-        description: 'Append markdown content to a page.',
+        description:
+          'Append Markdown with optimistic concurrency protection. Read the page immediately before appending and read content back after success to verify Markdown fidelity. On a conflict, read it again and retry the reconciled request with a new idempotencyKey.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -946,17 +955,18 @@ export class McpToolService {
       throw new BadRequestException('format must be markdown, html, or json');
     }
 
-    await this.maybeAuditRead(context, page);
+    const [permissions, indexStatus] = await Promise.all([
+      this.getSpacePermissions(context, page.spaceId),
+      this.getIndexStatusForPage(context.client.workspaceId, page.id),
+      this.maybeAuditRead(context, page),
+    ]);
 
     return {
       page: this.toPageMetadata(page),
       content: this.formatPageContent(page, format),
       format,
-      permissions: await this.getSpacePermissions(context, page.spaceId),
-      indexStatus: await this.getIndexStatusForPage(
-        context.client.workspaceId,
-        page.id,
-      ),
+      permissions,
+      indexStatus,
     };
   }
 
@@ -1161,30 +1171,31 @@ export class McpToolService {
           });
           return createdPage;
         });
-        const historyWarnings =
-          await this.pageHistoryMcpService.capturePageSnapshot(page, actor.id);
-        const indexAttempt = await this.tryIndexPage(context, page.id);
-
-        const auditWarnings = await this.auditMutation({
-          workspaceId: context.client.workspaceId,
-          clientId: context.client.id,
-          actorUserId: actor.id,
-          event: 'mcp.page.create',
-          resourceType: 'page',
-          resourceId: page.id,
-          spaceId: page.spaceId,
-          toolName: 'create_page',
-          requestId: context.requestId,
-          after: {
-            title: page.title,
-            spaceId: page.spaceId,
-            parentPageId: page.parentPageId,
-          },
-          metadata: {
-            contentHash: this.getContentHash(content),
-          },
-          ipAddress: context.ipAddress,
-        });
+        const [historyWarnings, indexAttempt, auditWarnings] =
+          await Promise.all([
+            this.pageHistoryMcpService.capturePageSnapshot(page, actor.id),
+            this.tryIndexPage(context, page.id),
+            this.auditMutation({
+              workspaceId: context.client.workspaceId,
+              clientId: context.client.id,
+              actorUserId: actor.id,
+              event: 'mcp.page.create',
+              resourceType: 'page',
+              resourceId: page.id,
+              spaceId: page.spaceId,
+              toolName: 'create_page',
+              requestId: context.requestId,
+              after: {
+                title: page.title,
+                spaceId: page.spaceId,
+                parentPageId: page.parentPageId,
+              },
+              metadata: {
+                contentHash: this.getContentHash(content),
+              },
+              ipAddress: context.ipAddress,
+            }),
+          ]);
 
         await execution.checkpoint({
           stage: 'side_effects_complete',
@@ -1254,53 +1265,56 @@ export class McpToolService {
       getResourceId: (response) => this.getResponsePageId(response),
       reconcile: (record) => this.reconcilePageWrite(context, record, 'page'),
       run: async (execution) => {
-        const updatedPage = await this.pageService.update(
-          page,
-          {
-            pageId: page.id,
-            title: title ?? undefined,
-            icon: icon ?? undefined,
-            content,
-            operation: hasContent ? 'replace' : undefined,
-            format,
-          },
-          actor,
-          { expectedUpdatedAt, preparedContent },
+        const updatedPage = await this.runPageUpdateWithGuidance(() =>
+          this.pageService.update(
+            page,
+            {
+              pageId: page.id,
+              title: title ?? undefined,
+              icon: icon ?? undefined,
+              content,
+              operation: hasContent ? 'replace' : undefined,
+              format,
+            },
+            actor,
+            { expectedUpdatedAt, preparedContent },
+          ),
         );
-        const historyWarnings =
-          await this.pageHistoryMcpService.capturePageSnapshot(page, actor.id);
         await execution.checkpoint({
           stage: 'page_mutated',
           resourceId: page.id,
         });
-        const indexAttempt = await this.tryIndexPage(context, page.id);
-
-        const auditWarnings = await this.auditMutation({
-          workspaceId: context.client.workspaceId,
-          clientId: context.client.id,
-          actorUserId: actor.id,
-          event: 'mcp.page.update',
-          resourceType: 'page',
-          resourceId: page.id,
-          spaceId: page.spaceId,
-          toolName: 'update_page',
-          requestId: context.requestId,
-          before: {
-            title: page.title,
-            icon: page.icon,
-            updatedAt: page.updatedAt.toISOString(),
-          },
-          after: {
-            title: updatedPage.title,
-            icon: updatedPage.icon,
-            updatedAt: updatedPage.updatedAt.toISOString(),
-          },
-          metadata: {
-            contentHash: this.getContentHash(content),
-            blindUpdate: false,
-          },
-          ipAddress: context.ipAddress,
-        });
+        const [historyWarnings, indexAttempt, auditWarnings] =
+          await Promise.all([
+            this.pageHistoryMcpService.capturePageSnapshot(page, actor.id),
+            this.tryIndexPage(context, page.id),
+            this.auditMutation({
+              workspaceId: context.client.workspaceId,
+              clientId: context.client.id,
+              actorUserId: actor.id,
+              event: 'mcp.page.update',
+              resourceType: 'page',
+              resourceId: page.id,
+              spaceId: page.spaceId,
+              toolName: 'update_page',
+              requestId: context.requestId,
+              before: {
+                title: page.title,
+                icon: page.icon,
+                updatedAt: page.updatedAt.toISOString(),
+              },
+              after: {
+                title: updatedPage.title,
+                icon: updatedPage.icon,
+                updatedAt: updatedPage.updatedAt.toISOString(),
+              },
+              metadata: {
+                contentHash: this.getContentHash(content),
+                blindUpdate: false,
+              },
+              ipAddress: context.ipAddress,
+            }),
+          ]);
 
         await execution.checkpoint({
           stage: 'side_effects_complete',
@@ -1360,42 +1374,45 @@ export class McpToolService {
       getResourceId: (response) => this.getResponsePageId(response),
       reconcile: (record) => this.reconcilePageWrite(context, record, 'page'),
       run: async (execution) => {
-        const updatedPage = await this.pageService.update(
-          page,
-          {
-            pageId: page.id,
-            content: markdown,
-            operation: 'append',
-            format: 'markdown',
-          },
-          actor,
-          { expectedUpdatedAt, preparedContent },
+        const updatedPage = await this.runPageUpdateWithGuidance(() =>
+          this.pageService.update(
+            page,
+            {
+              pageId: page.id,
+              content: markdown,
+              operation: 'append',
+              format: 'markdown',
+            },
+            actor,
+            { expectedUpdatedAt, preparedContent },
+          ),
         );
-        const historyWarnings =
-          await this.pageHistoryMcpService.capturePageSnapshot(page, actor.id);
         await execution.checkpoint({
           stage: 'page_mutated',
           resourceId: page.id,
         });
-        const indexAttempt = await this.tryIndexPage(context, page.id);
-
-        const auditWarnings = await this.auditMutation({
-          workspaceId: context.client.workspaceId,
-          clientId: context.client.id,
-          actorUserId: actor.id,
-          event: 'mcp.page.append',
-          resourceType: 'page',
-          resourceId: page.id,
-          spaceId: page.spaceId,
-          toolName: 'append_page',
-          requestId: context.requestId,
-          metadata: {
-            heading: heading ?? null,
-            contentHash: this.getContentHash(content),
-            contentLength: content.length,
-          },
-          ipAddress: context.ipAddress,
-        });
+        const [historyWarnings, indexAttempt, auditWarnings] =
+          await Promise.all([
+            this.pageHistoryMcpService.capturePageSnapshot(page, actor.id),
+            this.tryIndexPage(context, page.id),
+            this.auditMutation({
+              workspaceId: context.client.workspaceId,
+              clientId: context.client.id,
+              actorUserId: actor.id,
+              event: 'mcp.page.append',
+              resourceType: 'page',
+              resourceId: page.id,
+              spaceId: page.spaceId,
+              toolName: 'append_page',
+              requestId: context.requestId,
+              metadata: {
+                heading: heading ?? null,
+                contentHash: this.getContentHash(content),
+                contentLength: content.length,
+              },
+              ipAddress: context.ipAddress,
+            }),
+          ]);
 
         await execution.checkpoint({
           stage: 'side_effects_complete',
@@ -2499,61 +2516,60 @@ export class McpToolService {
     workspaceId: string,
     pageId: string,
   ): Promise<unknown> {
-    const chunkStats = await this.db
-      .selectFrom('docmostMcpChunks')
-      .select([
-        sql<number>`count(*)::int`.as('chunkCount'),
-        sql<Date>`max(indexed_at)`.as('lastIndexedAt'),
-      ])
-      .where('workspaceId', '=', workspaceId)
-      .where('pageId', '=', pageId)
-      .where('deletedAt', 'is', null)
-      .executeTakeFirst();
-
-    const lastJob = await this.db
-      .selectFrom('docmostMcpIndexJobs')
-      .select([
-        'id',
-        'status',
-        'jobType',
-        'lastError',
-        'stats',
-        'createdAt',
-        'startedAt',
-        'finishedAt',
-      ])
-      .where('workspaceId', '=', workspaceId)
-      .where('pageId', '=', pageId)
-      .orderBy('createdAt', 'desc')
-      .limit(1)
-      .executeTakeFirst();
-
-    const jobStatusRows = await this.db
-      .selectFrom('docmostMcpIndexJobs')
-      .select(['status', sql<number>`count(*)::int`.as('count')])
-      .where('workspaceId', '=', workspaceId)
-      .where('pageId', '=', pageId)
-      .groupBy('status')
-      .execute();
-
-    const recentJobs = await this.db
-      .selectFrom('docmostMcpIndexJobs')
-      .select([
-        'id',
-        'status',
-        'jobType',
-        'attemptCount',
-        'lastError',
-        'stats',
-        'createdAt',
-        'startedAt',
-        'finishedAt',
-      ])
-      .where('workspaceId', '=', workspaceId)
-      .where('pageId', '=', pageId)
-      .orderBy('createdAt', 'desc')
-      .limit(10)
-      .execute();
+    const [chunkStats, lastJob, jobStatusRows, recentJobs] = await Promise.all([
+      this.db
+        .selectFrom('docmostMcpChunks')
+        .select([
+          sql<number>`count(*)::int`.as('chunkCount'),
+          sql<Date>`max(indexed_at)`.as('lastIndexedAt'),
+        ])
+        .where('workspaceId', '=', workspaceId)
+        .where('pageId', '=', pageId)
+        .where('deletedAt', 'is', null)
+        .executeTakeFirst(),
+      this.db
+        .selectFrom('docmostMcpIndexJobs')
+        .select([
+          'id',
+          'status',
+          'jobType',
+          'lastError',
+          'stats',
+          'createdAt',
+          'startedAt',
+          'finishedAt',
+        ])
+        .where('workspaceId', '=', workspaceId)
+        .where('pageId', '=', pageId)
+        .orderBy('createdAt', 'desc')
+        .limit(1)
+        .executeTakeFirst(),
+      this.db
+        .selectFrom('docmostMcpIndexJobs')
+        .select(['status', sql<number>`count(*)::int`.as('count')])
+        .where('workspaceId', '=', workspaceId)
+        .where('pageId', '=', pageId)
+        .groupBy('status')
+        .execute(),
+      this.db
+        .selectFrom('docmostMcpIndexJobs')
+        .select([
+          'id',
+          'status',
+          'jobType',
+          'attemptCount',
+          'lastError',
+          'stats',
+          'createdAt',
+          'startedAt',
+          'finishedAt',
+        ])
+        .where('workspaceId', '=', workspaceId)
+        .where('pageId', '=', pageId)
+        .orderBy('createdAt', 'desc')
+        .limit(10)
+        .execute(),
+    ]);
 
     return {
       pageId,
@@ -2883,6 +2899,24 @@ export class McpToolService {
     const serialized =
       typeof content === 'string' ? content : JSON.stringify(content);
     return createHash('sha256').update(serialized).digest('hex');
+  }
+
+  private async runPageUpdateWithGuidance(
+    update: () => Promise<Page>,
+  ): Promise<Page> {
+    try {
+      return await update();
+    } catch (err) {
+      if (
+        err instanceof ConflictException &&
+        err.message === 'Page changed since expectedUpdatedAt'
+      ) {
+        throw new ConflictException(
+          'Page changed since expectedUpdatedAt. Call get_page, reconcile with the latest content, then retry with its updatedAt and a new idempotencyKey.',
+        );
+      }
+      throw err;
+    }
   }
 
   private async tryIndexPage(

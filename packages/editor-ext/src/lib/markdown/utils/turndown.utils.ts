@@ -22,6 +22,7 @@ export function htmlToMarkdown(html: string): string {
 
   turndownService.use([
     TurndownPluginGfm.tables,
+    headerlessTable,
     TurndownPluginGfm.strikethrough,
     TurndownPluginGfm.highlightedCodeBlock,
     taskList,
@@ -36,6 +37,100 @@ export function htmlToMarkdown(html: string): string {
     video,
   ]);
   return turndownService.turndown(html).replaceAll('<br>', ' ');
+}
+
+function headerlessTable(turndownService: _TurndownService) {
+  turndownService.addRule('headerlessTable', {
+    filter: function (node: HTMLTableElement) {
+      if (node.nodeName !== 'TABLE' || !isSimpleMarkdownTable(node)) {
+        return false;
+      }
+
+      return !node.querySelector('th') || hasSyntheticEmptyHeader(node);
+    },
+    replacement: function (content: string, node: HTMLTableElement) {
+      let rows = content
+        .replace(/\n+/g, '\n')
+        .trim()
+        .split('\n')
+        .filter(Boolean);
+      const syntheticEmptyHeader = hasSyntheticEmptyHeader(node);
+      const promotedRow = node.rows.item(syntheticEmptyHeader ? 1 : 0);
+      const alignmentRow = node.rows.item(0);
+      if (syntheticEmptyHeader) {
+        rows = rows.slice(2);
+      }
+
+      const columnCount = promotedRow
+        ? Array.from(promotedRow.cells).reduce(
+            (count, cell) => count + Math.max(cell.colSpan || 1, 1),
+            0,
+          )
+        : 0;
+
+      if (rows.length === 0 || columnCount === 0) {
+        return '';
+      }
+
+      const dividers = Array.from(alignmentRow?.cells ?? []).flatMap((cell) =>
+        Array.from({ length: Math.max(cell.colSpan || 1, 1) }, () =>
+          markdownTableDivider(cell),
+        ),
+      );
+      while (dividers.length < columnCount) {
+        dividers.push('---');
+      }
+      const divider = `| ${dividers.join(' | ')} |`;
+      const body = rows.length > 1 ? `\n${rows.slice(1).join('\n')}` : '';
+      const captionText = node.caption?.textContent?.trim();
+      const caption = captionText ? `${captionText}\n\n` : '';
+
+      return `\n\n${caption}${rows[0]}\n${divider}${body}\n\n`;
+    },
+  });
+}
+
+function isSimpleMarkdownTable(node: HTMLTableElement): boolean {
+  if (
+    node.rows.length === 0 ||
+    (node.rows.length === 1 && node.rows.item(0)?.cells.length <= 1)
+  ) {
+    return false;
+  }
+
+  return !node.querySelector(
+    'table, ul, ol, h1, h2, h3, h4, h5, h6, hr, blockquote, pre',
+  );
+}
+
+function hasSyntheticEmptyHeader(node: HTMLTableElement): boolean {
+  const firstRow = node.rows.item(0);
+  if (!firstRow || node.rows.length < 2 || firstRow.cells.length === 0) {
+    return false;
+  }
+
+  return Array.from(firstRow.cells).every(
+    (cell) => cell.nodeName === 'TH' && !cell.textContent?.trim(),
+  );
+}
+
+function markdownTableDivider(cell: HTMLTableCellElement): string {
+  const alignment = (
+    cell.style?.textAlign ||
+    cell.getAttribute('align') ||
+    ''
+  ).toLowerCase();
+
+  if (alignment === 'center') {
+    return ':---:';
+  }
+  if (alignment === 'right') {
+    return '---:';
+  }
+  if (alignment === 'left') {
+    return ':---';
+  }
+  return '---';
 }
 
 function listParagraph(turndownService: _TurndownService) {
@@ -53,7 +148,9 @@ function listParagraph(turndownService: _TurndownService) {
 function orderedListItem(turndownService: _TurndownService) {
   turndownService.addRule('orderedListItem', {
     filter: function (node: HTMLInputElement) {
-      return node.nodeName === 'LI' && node.getAttribute('data-type') !== 'taskItem';
+      return (
+        node.nodeName === 'LI' && node.getAttribute('data-type') !== 'taskItem'
+      );
     },
     replacement: (content: string, node: HTMLInputElement, options: any) => {
       const parent = node.parentNode as HTMLElement;
@@ -114,9 +211,7 @@ function taskList(turndownService: _TurndownService) {
       const prefix = `- ${isChecked ? '[x]' : '[ ]'} `;
 
       return (
-        prefix +
-        text +
-        (node.nextSibling && !/\n$/.test(text) ? '\n' : '')
+        prefix + text + (node.nextSibling && !/\n$/.test(text) ? '\n' : '')
       );
     },
   });
@@ -211,9 +306,7 @@ function video(turndownService: _TurndownService) {
     replacement: function (_content: string, node: HTMLInputElement) {
       const src = node.getAttribute('src') || '';
       const ariaLabel = node.getAttribute('aria-label');
-      const name = sanitizeMdLinkText(
-        ariaLabel || getBasename(src) || src,
-      );
+      const name = sanitizeMdLinkText(ariaLabel || getBasename(src) || src);
       return '[' + name + '](' + src + ')';
     },
   });

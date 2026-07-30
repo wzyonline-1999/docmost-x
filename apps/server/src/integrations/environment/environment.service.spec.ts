@@ -10,6 +10,7 @@ describe('EnvironmentService', () => {
 
     expect(service.isMcpEnabled()).toBe(false);
     expect(service.isVectorSearchEnabled()).toBe(false);
+    expect(service.getMcpRateLimitMaxRequests()).toBe(0);
   });
 
   it('keeps vector search independent from the MCP transport flag', () => {

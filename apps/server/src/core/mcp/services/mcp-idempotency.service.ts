@@ -116,7 +116,7 @@ export class McpIdempotencyService {
 
       if (existing.requestHash !== requestHash) {
         throw new ConflictException(
-          'Idempotency key was already used with a different request',
+          'Idempotency key was already used with a different request. Reuse a key only for an exact retry; if any argument changed, including expectedUpdatedAt, use a new idempotencyKey.',
         );
       }
 

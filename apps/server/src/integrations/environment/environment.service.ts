@@ -336,7 +336,7 @@ export class EnvironmentService {
 
   getMcpRateLimitMaxRequests(): number {
     return parseInt(
-      this.configService.get<string>('MCP_RATE_LIMIT_MAX_REQUESTS', '120'),
+      this.configService.get<string>('MCP_RATE_LIMIT_MAX_REQUESTS', '0'),
       10,
     );
   }

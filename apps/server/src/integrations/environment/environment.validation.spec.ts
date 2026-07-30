@@ -34,6 +34,15 @@ describe('environment validation', () => {
     );
   });
 
+  it('allows MCP request limiting to be disabled explicitly', () => {
+    expect(
+      getEnvironmentValidationMessages({
+        ...baseEnvironment,
+        MCP_RATE_LIMIT_MAX_REQUESTS: '0',
+      }),
+    ).toEqual([]);
+  });
+
   it.each([
     ['MCP_MAX_BATCH_SIZE', '0'],
     ['MCP_READ_AUDIT_SAMPLE_RATE', '1.1'],

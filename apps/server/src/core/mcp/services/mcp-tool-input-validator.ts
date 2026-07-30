@@ -110,6 +110,8 @@ export class McpToolInputValidator {
       properties.expectedUpdatedAt = {
         type: 'string',
         format: 'date-time',
+        description:
+          'The updatedAt returned by the immediately preceding get_page call. After a conflict, re-read the page and use a new idempotencyKey for the changed request.',
       };
       required.add('expectedUpdatedAt');
     }
@@ -148,6 +150,8 @@ export class McpToolInputValidator {
       type: 'string',
       minLength: 1,
       maxLength: MCP_MAX_IDEMPOTENCY_KEY_LENGTH,
+      description:
+        'Stable key for retries of this exact request only. If any argument changes, including expectedUpdatedAt, use a new key.',
     };
   }
 

@@ -196,7 +196,7 @@ export class EnvironmentVariables {
 
   @IsOptional()
   @IsNumberString()
-  @IsNumericStringInRange(1, 100_000)
+  @IsNumericStringInRange(0, 100_000)
   MCP_RATE_LIMIT_MAX_REQUESTS: string;
 
   @IsOptional()

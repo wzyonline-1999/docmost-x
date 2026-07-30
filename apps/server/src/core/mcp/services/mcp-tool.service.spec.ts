@@ -7,7 +7,11 @@ jest.mock('../../page/services/page.service', () => ({
   PageService: class PageService {},
 }));
 
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { McpToolService } from './mcp-tool.service';
 import type { McpToolContext } from '../types/mcp-tool.types';
 
@@ -193,6 +197,8 @@ describe('McpToolService', () => {
     const definitions = new Map(
       service.listTools().map((definition) => [definition.name, definition]),
     );
+    const updateProperties = definitions.get('update_page')?.inputSchema
+      .properties as Record<string, { description?: string }>;
 
     expect(definitions.get('create_page')?.inputSchema.required).toEqual(
       expect.arrayContaining(['spaceId', 'title', 'idempotencyKey']),
@@ -207,6 +213,15 @@ describe('McpToolService', () => {
         'expectedUpdatedAt',
         'idempotencyKey',
       ]),
+    );
+    expect(updateProperties.idempotencyKey.description).toContain(
+      'exact request only',
+    );
+    expect(updateProperties.expectedUpdatedAt.description).toContain(
+      'immediately preceding get_page',
+    );
+    expect(definitions.get('list_pages')?.description).toContain(
+      'immediate children',
     );
   });
 
@@ -893,6 +908,58 @@ describe('McpToolService', () => {
         event: 'mcp.page.update',
         resourceId: page.id,
       }),
+    );
+  });
+
+  it('returns actionable recovery guidance for optimistic-lock conflicts', async () => {
+    const permissionService = {
+      assertPagePermission: jest.fn().mockResolvedValue(page),
+    };
+    const pageRepo = {
+      findById: jest.fn().mockResolvedValue(page),
+    };
+    const pageService = {
+      update: jest
+        .fn()
+        .mockRejectedValue(
+          new ConflictException('Page changed since expectedUpdatedAt'),
+        ),
+    };
+    const actorAccessService = {
+      requireActor: jest.fn().mockResolvedValue(actor),
+      assertCanEditPage: jest.fn().mockResolvedValue(undefined),
+    };
+    const idempotencyService = {
+      run: jest.fn().mockImplementation(({ run }) =>
+        run({
+          checkpointResourceId: jest.fn().mockResolvedValue(undefined),
+          checkpoint: jest.fn().mockResolvedValue(undefined),
+        }),
+      ),
+    };
+    const service = createService({
+      permissionService,
+      pageRepo,
+      pageService,
+      actorAccessService,
+      idempotencyService,
+    });
+
+    await expect(
+      service.callTool(
+        {
+          name: 'update_page',
+          arguments: {
+            pageId: page.id,
+            title: 'Concurrent update',
+            expectedUpdatedAt: page.updatedAt.toISOString(),
+            idempotencyKey: 'concurrent-update-1',
+          },
+        },
+        context,
+      ),
+    ).rejects.toThrow(
+      'Call get_page, reconcile with the latest content, then retry with its updatedAt and a new idempotencyKey',
     );
   });
 
