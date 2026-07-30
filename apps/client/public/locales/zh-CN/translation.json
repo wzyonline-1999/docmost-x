@@ -1294,6 +1294,8 @@
   "MCP clients could not be loaded": "无法加载 MCP 客户端",
   "Check the connection and try loading the client list again.": "请检查网络连接，然后重新加载客户端列表。",
   "Retry": "重试",
+  "Retry title sync": "重试标题同步",
+  "Title sync failed. Your local title is preserved.": "标题同步失败，本地标题仍已保留",
   "This page shows": "当前页显示",
   "clients": "个客户端",
   "Updating": "正在更新",

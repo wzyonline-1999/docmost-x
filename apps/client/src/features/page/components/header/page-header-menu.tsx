@@ -1,4 +1,11 @@
-import { ActionIcon, Group, Menu, Text, ThemeIcon, Tooltip } from "@mantine/core";
+import {
+  ActionIcon,
+  Group,
+  Menu,
+  Text,
+  ThemeIcon,
+  Tooltip,
+} from "@mantine/core";
 import {
   IconArrowRight,
   IconArrowsHorizontal,
@@ -12,6 +19,7 @@ import {
   IconMarkdown,
   IconMessage,
   IconPrinter,
+  IconRefresh,
   IconStar,
   IconStarFilled,
   IconTrash,
@@ -37,6 +45,7 @@ import ExportModal from "@/components/common/export-modal";
 import { htmlToMarkdown } from "@docmost/editor-ext";
 import {
   pageEditorAtom,
+  titleSyncFeedbackAtom,
   yjsConnectionStatusAtom,
 } from "@/features/editor/atoms/editor-atoms.ts";
 import { formattedDate } from "@/lib/time.ts";
@@ -58,6 +67,11 @@ import {
   useWatchPageMutation,
   useUnwatchPageMutation,
 } from "@/features/page/queries/watcher-query";
+import { currentUserAtom } from "@/features/user/atoms/current-user-atom";
+import {
+  requestPendingTitleSync,
+  retryPendingTitles,
+} from "@/features/editor/utils/title-sync-storage";
 
 interface PageHeaderMenuProps {
   readOnly?: boolean;
@@ -100,6 +114,7 @@ export default function PageHeaderMenu({ readOnly }: PageHeaderMenuProps) {
   return (
     <>
       <ConnectionWarning />
+      <TitleSyncWarning pageId={page?.id} />
 
       {!readOnly && !page?.isBase && <PageEditModeToggle size="xs" />}
 
@@ -131,6 +146,49 @@ export default function PageHeaderMenu({ readOnly }: PageHeaderMenuProps) {
 
       <PageActionMenu readOnly={readOnly} />
     </>
+  );
+}
+
+function TitleSyncWarning({ pageId }: { pageId?: string }) {
+  const { t } = useTranslation();
+  const currentUser = useAtomValue(currentUserAtom);
+  const feedback = useAtomValue(titleSyncFeedbackAtom);
+
+  if (
+    !pageId ||
+    feedback.pageId !== pageId ||
+    feedback.status !== "failed" ||
+    !currentUser
+  ) {
+    return null;
+  }
+
+  const retryTitleSync = () => {
+    retryPendingTitles(
+      {
+        accountId: currentUser.user.id,
+        workspaceId: currentUser.workspace.id,
+      },
+      pageId,
+    );
+    requestPendingTitleSync();
+  };
+
+  return (
+    <Tooltip
+      label={t("Title sync failed. Your local title is preserved.")}
+      openDelay={250}
+      withArrow
+    >
+      <ActionIcon
+        variant="subtle"
+        color="red"
+        aria-label={t("Retry title sync")}
+        onClick={retryTitleSync}
+      >
+        <IconRefresh size={18} stroke={2} />
+      </ActionIcon>
+    </Tooltip>
   );
 }
 
@@ -248,7 +306,10 @@ function PageActionMenu({ readOnly }: PageActionMenuProps) {
           <Menu.Item
             leftSection={
               isFavorited ? (
-                <IconStarFilled size={16} color="var(--mantine-color-yellow-5)" />
+                <IconStarFilled
+                  size={16}
+                  color="var(--mantine-color-yellow-5)"
+                />
               ) : (
                 <IconStar size={16} />
               )

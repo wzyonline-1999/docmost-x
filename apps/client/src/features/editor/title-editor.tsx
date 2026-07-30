@@ -1,5 +1,5 @@
 import "@/features/editor/styles/index.css";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { Document } from "@tiptap/extension-document";
 import { Heading } from "@tiptap/extension-heading";
@@ -9,25 +9,26 @@ import { useAtomValue } from "jotai";
 import {
   currentPageEditModeAtom,
   pageEditorAtom,
+  titleSyncFeedbackAtom,
   titleEditorAtom,
 } from "@/features/editor/atoms/editor-atoms";
-import {
-  updatePageData,
-  useUpdateTitlePageMutation,
-} from "@/features/page/queries/page-query";
 import { useDebouncedCallback, getHotkeyHandler } from "@mantine/hooks";
-import { useAtom } from "jotai";
-import { useQueryEmit } from "@/features/websocket/use-query-emit.ts";
+import { useAtom, useSetAtom } from "jotai";
 import { History } from "@tiptap/extension-history";
 import { buildPageUrl } from "@/features/page/page.utils.ts";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import EmojiCommand from "@/features/editor/extensions/emoji-command.ts";
-import { UpdateEvent } from "@/features/websocket/types";
-import localEmitter from "@/lib/local-emitter.ts";
 import { PageEditMode } from "@/features/user/types/user.types.ts";
 import { searchSpotlight } from "@/features/search/constants.ts";
 import { platformModifierKey } from "@/lib";
+import {
+  getPendingTitle,
+  persistPendingTitle,
+  requestPendingTitleSync,
+  TitleSyncScope,
+} from "@/features/editor/utils/title-sync-storage.ts";
+import { currentUserAtom } from "@/features/user/atoms/current-user-atom";
 
 export interface TitleEditorProps {
   pageId: string;
@@ -47,14 +48,51 @@ export function TitleEditor({
   isBase,
 }: TitleEditorProps) {
   const { t } = useTranslation();
-  const { mutateAsync: updateTitlePageMutationAsync } =
-    useUpdateTitlePageMutation();
   const pageEditor = useAtomValue(pageEditorAtom);
   const [, setTitleEditor] = useAtom(titleEditorAtom);
-  const emit = useQueryEmit();
+  const currentUser = useAtomValue(currentUserAtom);
+  const setTitleSyncFeedback = useSetAtom(titleSyncFeedbackAtom);
   const navigate = useNavigate();
   const [activePageId, setActivePageId] = useState(pageId);
   const currentPageEditMode = useAtomValue(currentPageEditModeAtom);
+  const accountId = currentUser?.user.id;
+  const workspaceId = currentUser?.workspace.id;
+  const syncScope = useMemo<TitleSyncScope | null>(() => {
+    if (!accountId || !workspaceId) return null;
+    return {
+      accountId,
+      workspaceId,
+    };
+  }, [accountId, workspaceId]);
+  const initialTitle = useMemo(
+    () =>
+      syncScope ? (getPendingTitle(syncScope, pageId)?.title ?? title) : title,
+    [pageId, syncScope, title],
+  );
+  const requestDebouncedTitleSync = useDebouncedCallback(
+    requestPendingTitleSync,
+    500,
+  );
+
+  const queueTitleUpdate = useCallback(
+    (nextTitle: string) => {
+      if (!syncScope || activePageId !== pageId) return;
+
+      persistPendingTitle(syncScope, pageId, nextTitle);
+      setTitleSyncFeedback({
+        status: navigator.onLine ? "syncing" : "offline",
+        pageId,
+      });
+      requestDebouncedTitleSync();
+    },
+    [
+      activePageId,
+      pageId,
+      requestDebouncedTitleSync,
+      setTitleSyncFeedback,
+      syncScope,
+    ],
+  );
 
   const titleEditor = useEditor({
     extensions: [
@@ -82,10 +120,10 @@ export function TitleEditor({
       }
     },
     onUpdate({ editor }) {
-      debounceUpdate();
+      queueTitleUpdate(editor.getText());
     },
     editable: editable,
-    content: title,
+    content: initialTitle,
     immediatelyRender: true,
     shouldRerenderOnTransaction: false,
     editorProps: {
@@ -121,53 +159,31 @@ export function TitleEditor({
     );
   }, [title]);
 
-  const saveTitle = useCallback(() => {
-    if (!titleEditor || activePageId !== pageId) return;
-
-    if (
-      titleEditor.getText() === title ||
-      (titleEditor.getText() === "" && title === null)
-    ) {
-      return;
+  useEffect(() => {
+    if (!titleEditor || titleEditor.isDestroyed) return;
+    const pendingTitle = syncScope ? getPendingTitle(syncScope, pageId) : null;
+    const nextTitle = pendingTitle?.title ?? title;
+    if (nextTitle !== titleEditor.getText()) {
+      titleEditor.commands.setContent(nextTitle, { emitUpdate: false });
     }
-
-    updateTitlePageMutationAsync({
-      pageId: pageId,
-      title: titleEditor.getText(),
-    }).then((page) => {
-      const event: UpdateEvent = {
-        operation: "updateOne",
-        spaceId: page.spaceId,
-        entity: ["pages"],
-        id: page.id,
-        payload: {
-          title: page.title,
-          slugId: page.slugId,
-          parentPageId: page.parentPageId,
-          icon: page.icon,
-        },
-      };
-
-      if (page.title !== titleEditor.getText()) return;
-
-      updatePageData(page);
-
-      localEmitter.emit("message", event);
-      emit(event);
-    });
-  }, [pageId, title, titleEditor]);
-
-  const debounceUpdate = useDebouncedCallback(saveTitle, 500);
+  }, [pageId, syncScope, title, titleEditor]);
 
   useEffect(() => {
-    if (
-      titleEditor &&
-      !titleEditor.isDestroyed &&
-      title !== titleEditor.getText()
-    ) {
-      titleEditor.commands.setContent(title);
-    }
-  }, [pageId, title, titleEditor]);
+    if (!syncScope) return;
+    const pendingTitle = getPendingTitle(syncScope, pageId);
+    if (!pendingTitle) return;
+
+    setTitleSyncFeedback({
+      status:
+        pendingTitle.status === "blocked"
+          ? "failed"
+          : navigator.onLine
+            ? "syncing"
+            : "offline",
+      pageId,
+    });
+    if (pendingTitle.status === "pending") requestPendingTitleSync();
+  }, [pageId, setTitleSyncFeedback, syncScope]);
 
   useEffect(() => {
     setTimeout(() => {
@@ -179,14 +195,17 @@ export function TitleEditor({
 
   useEffect(() => {
     return () => {
-      // force-save title on navigation
-      saveTitle();
+      if (syncScope && getPendingTitle(syncScope, pageId)) {
+        requestPendingTitleSync();
+      }
     };
-  }, [pageId]);
+  }, [pageId, syncScope]);
 
   useEffect(() => {
     if (!titleEditor) return;
-    titleEditor.setEditable(editable && currentPageEditMode === PageEditMode.Edit);
+    titleEditor.setEditable(
+      editable && currentPageEditMode === PageEditMode.Edit,
+    );
   }, [currentPageEditMode, titleEditor, editable]);
 
   const openSearchDialog = () => {

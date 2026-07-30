@@ -1294,6 +1294,8 @@
   "MCP clients could not be loaded": "MCP clients could not be loaded",
   "Check the connection and try loading the client list again.": "Check the connection and try loading the client list again.",
   "Retry": "Retry",
+  "Retry title sync": "Retry title sync",
+  "Title sync failed. Your local title is preserved.": "Title sync failed. Your local title is preserved.",
   "This page shows": "This page shows",
   "clients": "clients",
   "Updating": "Updating",

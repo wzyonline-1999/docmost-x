@@ -12,6 +12,22 @@ export const yjsConnectionStatusAtom = atom<string>("");
 
 export const yjsSyncedAtom = atom<boolean>(false);
 
+export type TitleSyncStatus =
+  | "idle"
+  | "syncing"
+  | "synced"
+  | "offline"
+  | "failed";
+
+export interface TitleSyncFeedback {
+  status: TitleSyncStatus;
+  pageId?: string;
+}
+
+export const titleSyncFeedbackAtom = atom<TitleSyncFeedback>({
+  status: "idle",
+});
+
 export const showAiMenuAtom = atom(false);
 
 export const showLinkMenuAtom = atom(false);
