@@ -23,6 +23,10 @@ import { PageEditMode } from "@/features/user/types/user.types.ts";
 import { searchSpotlight } from "@/features/search/constants.ts";
 import { platformModifierKey } from "@/lib";
 import {
+  isPageSaveRequestFor,
+  PAGE_SAVE_REQUEST_EVENT,
+} from "@/features/editor/utils/page-save.ts";
+import {
   getPendingTitle,
   persistPendingTitle,
   requestPendingTitleSync,
@@ -132,10 +136,6 @@ export function TitleEditor({
       },
       handleDOMEvents: {
         keydown: (_view, event) => {
-          if (platformModifierKey(event) && event.code === "KeyS") {
-            event.preventDefault();
-            return true;
-          }
           if (platformModifierKey(event) && event.code === "KeyK") {
             searchSpotlight.open();
             return true;
@@ -144,6 +144,31 @@ export function TitleEditor({
       },
     },
   });
+
+  useEffect(() => {
+    const handlePageSaveRequest = (event: Event) => {
+      if (!isPageSaveRequestFor(event, pageId)) return;
+
+      const hadDebouncedRequest = requestDebouncedTitleSync.isPending();
+      requestDebouncedTitleSync.flush();
+
+      if (
+        !hadDebouncedRequest &&
+        syncScope &&
+        getPendingTitle(syncScope, pageId)
+      ) {
+        requestPendingTitleSync();
+      }
+    };
+
+    document.addEventListener(PAGE_SAVE_REQUEST_EVENT, handlePageSaveRequest);
+    return () => {
+      document.removeEventListener(
+        PAGE_SAVE_REQUEST_EVENT,
+        handlePageSaveRequest,
+      );
+    };
+  }, [pageId, requestDebouncedTitleSync, syncScope]);
 
   useEffect(() => {
     // Canonicalize only the path slug; keep query params (?row=, ?view=

@@ -76,6 +76,10 @@ import { EditorLinkMenu } from "@/features/editor/components/link/link-menu";
 import ColumnsMenu from "@/features/editor/components/columns/columns-menu.tsx";
 import { TransclusionLookupProvider } from "@/features/editor/components/transclusion/transclusion-lookup-context";
 import { useTranslation } from "react-i18next";
+import {
+  isPageSaveRequestFor,
+  PAGE_SAVE_REQUEST_EVENT,
+} from "./utils/page-save";
 
 interface PageEditorProps {
   pageId: string;
@@ -208,6 +212,30 @@ export default function PageEditor({
     };
   }, [pageId]);
 
+  useEffect(() => {
+    const handlePageSaveRequest = (event: Event) => {
+      if (!isPageSaveRequestFor(event, pageId)) return;
+
+      const currentProviders = providersRef.current;
+      if (!currentProviders || !navigator.onLine) return;
+
+      if (currentProviders.socket.status !== WebSocketStatus.Connected) {
+        currentProviders.socket.connect();
+        return;
+      }
+
+      currentProviders.remote.forceSync();
+    };
+
+    document.addEventListener(PAGE_SAVE_REQUEST_EVENT, handlePageSaveRequest);
+    return () => {
+      document.removeEventListener(
+        PAGE_SAVE_REQUEST_EVENT,
+        handlePageSaveRequest,
+      );
+    };
+  }, [pageId]);
+
   // Only connect/disconnect on tab/idle, not destroy
   useEffect(() => {
     if (!providersReady || !providersRef.current) return;
@@ -260,10 +288,6 @@ export default function PageEditor({
         },
         handleDOMEvents: {
           keydown: (_view, event) => {
-            if (platformModifierKey(event) && event.code === "KeyS") {
-              event.preventDefault();
-              return true;
-            }
             if (platformModifierKey(event) && event.code === "KeyK") {
               searchSpotlight.open();
               return true;

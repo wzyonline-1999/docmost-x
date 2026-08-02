@@ -19,6 +19,7 @@ import { useHasFeature } from "@/oss/hooks/use-feature";
 import { Feature } from "@/oss/features";
 import { getPageTitle } from "@/features/page/page.utils";
 import { recordRecentlyOpenedPage } from "@/features/page/utils/reading-continuity";
+import { usePageSaveHotkey } from "@/features/editor/hooks/use-page-save-hotkey.ts";
 const MemoizedFullEditor = React.memo(FullEditor);
 const MemoizedTitleEditor = React.memo(TitleEditor);
 const MemoizedPageHeader = React.memo(PageHeader);
@@ -62,6 +63,7 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
     isError,
     error,
   } = usePageQuery({ pageId: extractPageSlugId(pageSlug) });
+  usePageSaveHotkey(page?.id);
   const { data: space } = useGetSpaceBySlugQuery(page?.space?.slug);
 
   React.useEffect(() => {
