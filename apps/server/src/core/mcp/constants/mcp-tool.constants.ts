@@ -14,4 +14,10 @@ export const MCP_MUTATION_TOOLS: ReadonlySet<string> = new Set([
   'pause_index_job',
   'resume_index_job',
   'cancel_index_job',
+  'instantiate_template',
+  'create_template',
+  'update_template',
+  'publish_template',
+  'archive_template',
+  'delete_template',
 ]);

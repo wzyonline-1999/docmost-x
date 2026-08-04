@@ -6,6 +6,7 @@ import { getAppName } from "@/lib/config.ts";
 import { Helmet } from "react-helmet-async";
 import { Divider } from "@mantine/core";
 import WorkspaceDefaultPageEditMode from "@/features/workspace/components/settings/components/workspace-default-page-edit-mode.tsx";
+import AllowMemberTemplates from "@/oss/security/components/allow-member-templates";
 
 export default function WorkspaceSettings() {
   const { t } = useTranslation();
@@ -20,6 +21,8 @@ export default function WorkspaceSettings() {
 
       <Divider my="md" />
       <WorkspaceDefaultPageEditMode />
+      <Divider my="md" />
+      <AllowMemberTemplates />
     </>
   );
 }

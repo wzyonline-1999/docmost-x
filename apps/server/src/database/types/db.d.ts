@@ -719,8 +719,14 @@ export interface PageVerifiers {
 
 export interface Templates {
   id: Generated<string>;
+  key: string;
   title: string | null;
   description: string | null;
+  purpose: string | null;
+  useWhen: string | null;
+  tags: Generated<string[]>;
+  inputSchema: Generated<Json>;
+  titleTemplate: string | null;
   content: Json | null;
   ydoc: Buffer | null;
   icon: string | null;
@@ -731,9 +737,52 @@ export interface Templates {
   collaboratorIds: string[] | null;
   textContent: string | null;
   tsv: string | null;
+  status: Generated<string>;
+  draftRevision: Generated<number>;
+  currentVersion: Generated<number>;
+  publishedAt: Timestamp | null;
+  publishedById: string | null;
+  sourcePageId: string | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Generated<Timestamp>;
   deletedAt: Timestamp | null;
+}
+
+export interface TemplateVersions {
+  id: Generated<string>;
+  templateId: string;
+  workspaceId: string;
+  spaceId: string | null;
+  version: number;
+  key: string;
+  title: string;
+  description: string | null;
+  purpose: string;
+  useWhen: string | null;
+  tags: Generated<string[]>;
+  inputSchema: Json;
+  titleTemplate: string | null;
+  content: Json;
+  textContent: string | null;
+  icon: string | null;
+  contentHash: string;
+  createdById: string | null;
+  createdAt: Generated<Timestamp>;
+}
+
+export interface TemplateInstances {
+  id: Generated<string>;
+  templateId: string;
+  templateVersionId: string;
+  pageId: string;
+  workspaceId: string;
+  spaceId: string;
+  clientId: string | null;
+  actorUserId: string | null;
+  variables: Generated<Json>;
+  inputHash: string;
+  requestId: string | null;
+  createdAt: Generated<Timestamp>;
 }
 
 export interface AiChats {
@@ -816,6 +865,8 @@ export interface DB {
   shares: Shares;
   spaceMembers: SpaceMembers;
   spaces: Spaces;
+  templateInstances: TemplateInstances;
+  templateVersions: TemplateVersions;
   templates: Templates;
   userMfa: UserMfa;
   users: Users;

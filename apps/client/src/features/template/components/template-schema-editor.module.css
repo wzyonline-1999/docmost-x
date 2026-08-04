@@ -1,0 +1,11 @@
+.variableGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 140px;
+  gap: var(--mantine-spacing-sm);
+}
+
+@media (max-width: 62em) {
+  .variableGrid {
+    grid-template-columns: 1fr;
+  }
+}

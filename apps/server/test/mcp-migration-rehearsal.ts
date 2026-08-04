@@ -5,7 +5,8 @@ import { FileMigrationProvider, Kysely, Migrator, sql } from 'kysely';
 import { PostgresJSDialect } from 'kysely-postgres-js';
 import postgres from 'postgres';
 
-const MCP_MIGRATION_COUNT = 8;
+const MCP_MIGRATION_COUNT = 9;
+const AI_FIRST_TEMPLATES_MIGRATION = '20260802T120000-ai-first-templates';
 const OWNERSHIP_HARDENING_MIGRATION =
   '20260726T120000-mcp-client-ownership-hardening';
 const PRODUCTION_HARDENING_MIGRATION =
@@ -22,6 +23,8 @@ const MCP_TABLES = [
   'docmost_mcp_chunks',
   'docmost_mcp_index_jobs',
   'docmost_mcp_eligibility_reconciliations',
+  'template_versions',
+  'template_instances',
 ];
 const REQUIRED_INDEXES = [
   'idx_mcp_clients_token_hash_alive',
@@ -54,6 +57,13 @@ const REQUIRED_INDEXES = [
   'idx_mcp_eligibility_reconciliation_pending',
   'idx_attachments_content_index_recovery',
   'idx_attachments_deletion_recovery',
+  'idx_templates_workspace_key_alive',
+  'idx_templates_workspace_status_updated',
+  'idx_templates_tags',
+  'idx_template_versions_template_version',
+  'idx_template_versions_workspace_created',
+  'idx_template_instances_page',
+  'idx_template_instances_template_created',
 ];
 const REQUIRED_CONSTRAINTS = [
   'mcp_clients_status_check',
@@ -79,6 +89,8 @@ const REQUIRED_CONSTRAINTS = [
   'attachments_deletion_status_check',
   'attachments_content_index_attempt_count_check',
   'attachments_deletion_attempt_count_check',
+  'templates_status_check',
+  'templates_version_check',
 ];
 
 type DatabaseRow = { currentDatabase: string };
@@ -325,6 +337,16 @@ async function assertLegacyOwnershipRepair(
   workspaceId: string,
   schemaName: string,
 ): Promise<void> {
+  const templateRollback = await assertMigrationResult(
+    'AI-first templates rehearsal down',
+    migrator.migrateDown(),
+  );
+  assert.equal(
+    templateRollback.results?.[0]?.migrationName,
+    AI_FIRST_TEMPLATES_MIGRATION,
+    'AI-first templates must follow MCP production hardening',
+  );
+
   const productionRollback = await assertMigrationResult(
     'production hardening rehearsal down',
     migrator.migrateDown(),
@@ -332,7 +354,7 @@ async function assertLegacyOwnershipRepair(
   assert.equal(
     productionRollback.results?.[0]?.migrationName,
     PRODUCTION_HARDENING_MIGRATION,
-    'Production hardening must remain the latest migration',
+    'Production hardening must immediately precede AI-first templates',
   );
 
   const rollback = await assertMigrationResult(

@@ -45,6 +45,7 @@ import {
   McpToolDefinition,
 } from '../types/mcp-tool.types';
 import { McpToolInputValidator } from './mcp-tool-input-validator';
+import { McpTemplateService } from './mcp-template.service';
 
 type PageResult = {
   id: string;
@@ -134,6 +135,7 @@ export class McpToolService {
     private readonly pageService: PageService,
     private readonly pageHistoryMcpService: McpPageHistoryService,
     private readonly permissionService: McpPermissionService,
+    private readonly templateMcpService: McpTemplateService,
     private readonly vectorIndexService: McpVectorIndexService,
     private readonly actorAccessService: McpActorAccessService,
     private readonly pageTreeScopeService: PageTreeScopeService,
@@ -575,6 +577,7 @@ export class McpToolService {
           additionalProperties: false,
         },
       },
+      ...this.templateMcpService.listTools(),
     ];
     this.toolDefinitions = tools.map((definition) =>
       this.inputValidator.hardenDefinition(definition),
@@ -612,23 +615,33 @@ export class McpToolService {
           typeof args.attachmentId === 'string' ? args.attachmentId : undefined;
         const historyId =
           typeof args.historyId === 'string' ? args.historyId : undefined;
+        const templateId =
+          typeof args.templateId === 'string' ? args.templateId : undefined;
+        const targetSpaceId =
+          typeof args.targetSpaceId === 'string'
+            ? args.targetSpaceId
+            : undefined;
+        const deniedSpaceId = spaceId ?? targetSpaceId;
         await this.auditService.logPermissionDenied({
           workspaceId: context.client.workspaceId,
           clientId: context.client.id,
           actorUserId: context.client.actorUserId,
           toolName: params.name,
           action: params.name,
-          spaceId,
+          spaceId: deniedSpaceId,
           resourceType: attachmentId
             ? 'attachment'
             : historyId
               ? 'page_history'
-              : pageId
-                ? 'page'
-                : spaceId
-                  ? 'space'
-                  : 'permission',
-          resourceId: attachmentId ?? historyId ?? pageId ?? spaceId,
+              : templateId
+                ? 'template'
+                : pageId
+                  ? 'page'
+                  : deniedSpaceId
+                    ? 'space'
+                    : 'permission',
+          resourceId:
+            attachmentId ?? historyId ?? templateId ?? pageId ?? deniedSpaceId,
           requestId: context.requestId,
           ipAddress: context.ipAddress,
         });
@@ -637,7 +650,13 @@ export class McpToolService {
           clientId: context.client.id,
           workspaceId: context.client.workspaceId,
           toolName: params.name,
-          resourceId: attachmentId ?? historyId ?? pageId ?? spaceId ?? null,
+          resourceId:
+            attachmentId ??
+            historyId ??
+            templateId ??
+            pageId ??
+            deniedSpaceId ??
+            null,
           event: 'mcp.permission.denied',
         });
       }
@@ -789,6 +808,9 @@ export class McpToolService {
       case 'cancel_index_job':
         return this.controlIndexJob('cancel', args, context);
       default:
+        if (name.endsWith('_template') || name === 'list_templates') {
+          return this.templateMcpService.callTool(name, args, context);
+        }
         throw new NotFoundException(`Unknown MCP tool: ${name}`);
     }
   }

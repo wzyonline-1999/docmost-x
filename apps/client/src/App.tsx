@@ -47,6 +47,10 @@ const GroupInfo = lazy(() => import("@/pages/settings/group/group-info"));
 const Spaces = lazy(() => import("@/pages/settings/space/spaces.tsx"));
 const Shares = lazy(() => import("@/pages/settings/shares/shares.tsx"));
 const McpSettings = lazy(() => import("@/pages/settings/mcp/mcp-settings"));
+const TemplatesPage = lazy(() => import("@/pages/templates/templates"));
+const TemplateEditorPage = lazy(
+  () => import("@/pages/templates/template-editor"),
+);
 
 function routeElement(
   Component: LazyExoticComponent<ComponentType>,
@@ -104,6 +108,11 @@ export default function App() {
           <Route path={"/home"} element={routeElement(Home)} />
           <Route path={"/spaces"} element={routeElement(SpacesPage)} />
           <Route path={"/favorites"} element={routeElement(FavoritesPage)} />
+          <Route path={"/templates"} element={routeElement(TemplatesPage)} />
+          <Route
+            path={"/templates/:templateId"}
+            element={routeElement(TemplateEditorPage)}
+          />
           <Route
             path={"/labels/:labelName"}
             element={routeElement(LabelPage)}

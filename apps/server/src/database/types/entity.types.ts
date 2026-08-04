@@ -46,6 +46,8 @@ import {
   Watchers,
   Audit as _Audit,
   Templates,
+  TemplateInstances,
+  TemplateVersions,
 } from './db';
 import { PageEmbeddings } from '@docmost/db/types/embeddings.types';
 
@@ -59,10 +61,7 @@ export type UpdatableAiChat = Updateable<Omit<AiChats, 'id'>>;
 // full-text search. It is omitted from the public type so it never leaks
 // into HTTP responses or the chat history fed to the language model.
 export type AiChatMessage = Omit<Selectable<AiChatMessages>, 'tsv'>;
-export type InsertableAiChatMessage = Omit<
-  Insertable<AiChatMessages>,
-  'tsv'
->;
+export type InsertableAiChatMessage = Omit<Insertable<AiChatMessages>, 'tsv'>;
 
 // Workspace
 export type Workspace = Selectable<Workspaces>;
@@ -161,11 +160,14 @@ export type UpdatableFavorite = Updateable<Omit<Favorites, 'id'>>;
 // Page Transclusion
 export type PageTransclusion = Selectable<PageTransclusions>;
 export type InsertablePageTransclusion = Insertable<PageTransclusions>;
-export type UpdatablePageTransclusion = Updateable<Omit<PageTransclusions, 'id'>>;
+export type UpdatablePageTransclusion = Updateable<
+  Omit<PageTransclusions, 'id'>
+>;
 
 // Page Transclusion Reference
 export type PageTransclusionReference = Selectable<PageTransclusionReferences>;
-export type InsertablePageTransclusionReference = Insertable<PageTransclusionReferences>;
+export type InsertablePageTransclusionReference =
+  Insertable<PageTransclusionReferences>;
 export type UpdatablePageTransclusionReference = Updateable<
   Omit<PageTransclusionReferences, 'id'>
 >;
@@ -191,8 +193,7 @@ export type InsertableMcpClient = Insertable<McpClients>;
 export type UpdatableMcpClient = Updateable<Omit<McpClients, 'id'>>;
 
 // MCP Client Space Permissions
-export type McpClientSpacePermission =
-  Selectable<McpClientSpacePermissions>;
+export type McpClientSpacePermission = Selectable<McpClientSpacePermissions>;
 export type InsertableMcpClientSpacePermission =
   Insertable<McpClientSpacePermissions>;
 export type UpdatableMcpClientSpacePermission = Updateable<
@@ -214,9 +215,7 @@ export type UpdatableMcpIdempotencyKey = Updateable<
 // Docmost MCP Chunks
 export type DocmostMcpChunk = Selectable<DocmostMcpChunks>;
 export type InsertableDocmostMcpChunk = Insertable<DocmostMcpChunks>;
-export type UpdatableDocmostMcpChunk = Updateable<
-  Omit<DocmostMcpChunks, 'id'>
->;
+export type UpdatableDocmostMcpChunk = Updateable<Omit<DocmostMcpChunks, 'id'>>;
 
 // Docmost MCP Index Jobs
 export type DocmostMcpIndexJob = Selectable<DocmostMcpIndexJobs>;
@@ -267,7 +266,9 @@ export type UpdatablePagePermission = Updateable<Omit<_PagePermissions, 'id'>>;
 // Page Verification
 export type PageVerification = Selectable<_PageVerifications>;
 export type InsertablePageVerification = Insertable<_PageVerifications>;
-export type UpdatablePageVerification = Updateable<Omit<_PageVerifications, 'id'>>;
+export type UpdatablePageVerification = Updateable<
+  Omit<_PageVerifications, 'id'>
+>;
 
 // Page Verifier
 export type PageVerifier = Selectable<_PageVerifiers>;
@@ -287,6 +288,12 @@ export type UpdatableAudit = Updateable<Omit<_Audit, 'id'>>;
 export type Template = Selectable<Templates>;
 export type InsertableTemplate = Insertable<Templates>;
 export type UpdatableTemplate = Updateable<Omit<Templates, 'id'>>;
+
+export type TemplateVersion = Selectable<TemplateVersions>;
+export type InsertableTemplateVersion = Insertable<TemplateVersions>;
+
+export type TemplateInstance = Selectable<TemplateInstances>;
+export type InsertableTemplateInstance = Insertable<TemplateInstances>;
 
 // Base Property
 export type BaseProperty = Selectable<BaseProperties>;

@@ -25,6 +25,7 @@ import { FavoriteModule } from './favorite/favorite.module';
 import { SessionModule } from './session/session.module';
 import { ClsMiddleware } from 'nestjs-cls';
 import { McpModule } from './mcp/mcp.module';
+import { TemplateModule } from './template/template.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { McpModule } from './mcp/mcp.module';
     NotificationModule,
     WatcherModule,
     SessionModule,
+    TemplateModule,
     McpModule,
   ],
 })

@@ -45,6 +45,19 @@
   height: 45px;
 }
 
+.fixedToolbar[data-template-mode="true"] {
+  position: sticky;
+  top: 0;
+  inset-inline-start: auto;
+  inset-inline-end: auto;
+  z-index: 2;
+  width: 100%;
+}
+
+.spacer[data-template-mode="true"] {
+  display: none;
+}
+
 .divider {
   flex-shrink: 0;
   width: 1px;
@@ -63,6 +76,12 @@
     var(--mantine-color-gray-1),
     var(--mantine-color-dark-5)
   );
+}
+
+@media (max-width: 62em) {
+  .fixedToolbar[data-template-mode="true"] {
+    position: relative;
+  }
 }
 
 @media print {

@@ -16,6 +16,9 @@ const UUID_FIELDS = new Set([
   'parentPageId',
   'rootPageId',
   'spaceId',
+  'sourcePageId',
+  'targetSpaceId',
+  'templateId',
   'toHistoryId',
 ]);
 

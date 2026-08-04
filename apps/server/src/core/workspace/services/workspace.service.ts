@@ -91,7 +91,15 @@ export class WorkspaceService {
   async getWorkspacePublicData(workspaceId: string) {
     const workspace = await this.db
       .selectFrom('workspaces')
-      .select(['id', 'name', 'logo', 'hostname', 'enforceSso', 'licenseKey', 'plan'])
+      .select([
+        'id',
+        'name',
+        'logo',
+        'hostname',
+        'enforceSso',
+        'licenseKey',
+        'plan',
+      ])
       .select((eb) =>
         jsonArrayFrom(
           eb
@@ -347,18 +355,22 @@ export class WorkspaceService {
       }
 
       if (typeof updateWorkspaceDto.mcpEnabled !== 'undefined') {
-        if (!this.licenseCheckService.hasFeature(ws.licenseKey, 'mcp', ws.plan)) {
-          throw new ForbiddenException(
-            'This feature requires a valid license',
-          );
+        if (
+          !this.licenseCheckService.hasFeature(ws.licenseKey, 'mcp', ws.plan)
+        ) {
+          throw new ForbiddenException('This feature requires a valid license');
         }
       }
 
       if (typeof updateWorkspaceDto.isScimEnabled !== 'undefined') {
-        if (!this.licenseCheckService.hasFeature(ws.licenseKey, Feature.SCIM, ws.plan)) {
-          throw new ForbiddenException(
-            'This feature requires a valid license',
-          );
+        if (
+          !this.licenseCheckService.hasFeature(
+            ws.licenseKey,
+            Feature.SCIM,
+            ws.plan,
+          )
+        ) {
+          throw new ForbiddenException('This feature requires a valid license');
         }
       }
 
@@ -377,13 +389,16 @@ export class WorkspaceService {
       if (
         typeof updateWorkspaceDto.disablePublicSharing !== 'undefined' ||
         typeof updateWorkspaceDto.trashRetentionDays !== 'undefined' ||
-        typeof updateWorkspaceDto.restrictApiToAdmins !== 'undefined' ||
-        typeof updateWorkspaceDto.allowMemberTemplates !== 'undefined'
+        typeof updateWorkspaceDto.restrictApiToAdmins !== 'undefined'
       ) {
-        if (!this.licenseCheckService.hasFeature(ws.licenseKey, Feature.SECURITY_SETTINGS, ws.plan)) {
-          throw new ForbiddenException(
-            'This feature requires a valid license',
-          );
+        if (
+          !this.licenseCheckService.hasFeature(
+            ws.licenseKey,
+            Feature.SECURITY_SETTINGS,
+            ws.plan,
+          )
+        ) {
+          throw new ForbiddenException('This feature requires a valid license');
         }
       }
 

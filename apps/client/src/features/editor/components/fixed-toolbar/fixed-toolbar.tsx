@@ -38,6 +38,7 @@ export const FixedToolbar: FC<FixedToolbarProps> = ({
       <div
         className={classes.fixedToolbar}
         data-fixed-toolbar="true"
+        data-template-mode={templateMode || undefined}
         role="toolbar"
         aria-label="Editor toolbar"
         onMouseDown={(e) => e.preventDefault()}
@@ -67,7 +68,11 @@ export const FixedToolbar: FC<FixedToolbarProps> = ({
           <HistoryGroup editor={editor} state={state} />
         </div>
       </div>
-      <div className={classes.spacer} aria-hidden />
+      <div
+        className={classes.spacer}
+        data-template-mode={templateMode || undefined}
+        aria-hidden
+      />
     </>
   );
 };

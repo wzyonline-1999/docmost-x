@@ -1,0 +1,32 @@
+.list {
+  border-top: 1px solid var(--mantine-color-default-border);
+}
+
+.item {
+  width: 100%;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: var(--mantine-spacing-sm);
+  align-items: center;
+  padding: var(--mantine-spacing-sm);
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  color: inherit;
+  text-align: left;
+
+  @mixin hover {
+    background: light-dark(
+      var(--mantine-color-gray-0),
+      var(--mantine-color-dark-7)
+    );
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--mantine-primary-color-filled);
+    outline-offset: -2px;
+  }
+}
+
+.itemText {
+  min-width: 0;
+}

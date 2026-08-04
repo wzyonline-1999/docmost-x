@@ -2,6 +2,7 @@ const APP_ROUTE = {
   HOME: "/home",
   SPACES: "/spaces",
   FAVORITES: "/favorites",
+  TEMPLATES: "/templates",
   SEARCH: "/search",
   AUTH: {
     LOGIN: "/login",

@@ -7,6 +7,11 @@ jest.mock('../../page/services/page.service', () => ({
   PageService: class PageService {},
 }));
 
+jest.mock('@sindresorhus/slugify', () => ({
+  __esModule: true,
+  default: (value: string) => value.toLowerCase().replace(/\s+/g, '-'),
+}));
+
 import {
   ConflictException,
   ForbiddenException,
@@ -64,6 +69,7 @@ describe('McpToolService', () => {
       pageService?: unknown;
       pageHistoryMcpService?: unknown;
       permissionService?: unknown;
+      templateMcpService?: unknown;
       vectorIndexService?: unknown;
       actorAccessService?: unknown;
       pageTreeScopeService?: unknown;
@@ -85,6 +91,10 @@ describe('McpToolService', () => {
         capturePageSnapshot: jest.fn().mockResolvedValue([]),
       }) as never,
       (overrides.permissionService ?? null) as never,
+      (overrides.templateMcpService ?? {
+        listTools: jest.fn(() => []),
+        callTool: jest.fn(),
+      }) as never,
       (overrides.vectorIndexService ?? null) as never,
       (overrides.actorAccessService ?? null) as never,
       (overrides.pageTreeScopeService ?? null) as never,

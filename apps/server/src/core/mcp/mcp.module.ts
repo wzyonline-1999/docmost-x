@@ -27,9 +27,11 @@ import { DeveloperApiController } from './developer-api.controller';
 import { McpDistributedTaskService } from './services/mcp-distributed-task.service';
 import { McpVectorReconciliationService } from './services/mcp-vector-reconciliation.service';
 import { McpRetentionService } from './services/mcp-retention.service';
+import { TemplateModule } from '../template/template.module';
+import { McpTemplateService } from './services/mcp-template.service';
 
 @Module({
-  imports: [AttachmentModule, PageModule, StorageModule],
+  imports: [AttachmentModule, PageModule, StorageModule, TemplateModule],
   controllers: [
     DeveloperApiController,
     McpController,
@@ -52,6 +54,7 @@ import { McpRetentionService } from './services/mcp-retention.service';
     McpRetentionService,
     McpToolService,
     McpTokenService,
+    McpTemplateService,
     McpVectorEligibilityService,
     McpVectorIndexProcessor,
     McpVectorIndexService,
@@ -75,6 +78,7 @@ import { McpRetentionService } from './services/mcp-retention.service';
     McpRetentionService,
     McpToolService,
     McpTokenService,
+    McpTemplateService,
     McpVectorEligibilityService,
     McpVectorIndexService,
     McpVectorReconciliationService,

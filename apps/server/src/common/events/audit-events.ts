@@ -73,6 +73,14 @@ export const AuditEvent = {
   PAGE_APPROVAL_REJECTED: 'page.approval_rejected',
   PAGE_MARKED_OBSOLETE: 'page.marked_obsolete',
 
+  // Template
+  TEMPLATE_CREATED: 'template.created',
+  TEMPLATE_UPDATED: 'template.updated',
+  TEMPLATE_PUBLISHED: 'template.published',
+  TEMPLATE_ARCHIVED: 'template.archived',
+  TEMPLATE_DELETED: 'template.deleted',
+  TEMPLATE_INSTANTIATED: 'template.instantiated',
+
   // Share
   SHARE_CREATED: 'share.created',
   SHARE_DELETED: 'share.deleted',
@@ -111,7 +119,7 @@ export const EXCLUDED_AUDIT_EVENTS: Set<string> = new Set([
   AuditEvent.COMMENT_UPDATED,
   AuditEvent.COMMENT_RESOLVED,
   AuditEvent.COMMENT_REOPENED,
-  AuditEvent.ATTACHMENT_UPLOADED
+  AuditEvent.ATTACHMENT_UPLOADED,
 ]);
 
 export const AuditResource = {
@@ -129,6 +137,7 @@ export const AuditResource = {
   WORKSPACE_INVITATION: 'workspace_invitation',
   ATTACHMENT: 'attachment',
   LICENSE: 'license',
+  TEMPLATE: 'template',
 } as const;
 
 export type AuditResourceType =
