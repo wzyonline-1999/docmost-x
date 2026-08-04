@@ -65,6 +65,7 @@ import {
   renameTemplateVariableInContent,
   renameTemplateVariableInText,
 } from "@/features/template/utils/template-variable-utils";
+import { canManageTemplate } from "@/features/template/utils/template-permission";
 import { workspaceAtom } from "@/features/user/atoms/current-user-atom";
 import { getAppName } from "@/lib/config";
 import useUserRole from "@/hooks/use-user-role";
@@ -96,13 +97,15 @@ export default function TemplateEditorPage() {
   const hydrating = useRef(false);
   const hydratedTemplateId = useRef<string | null>(null);
   const contentBaseline = useRef("");
-  const canManageTemplate = Boolean(
+  const canManageCurrentTemplate = Boolean(
     data &&
-    (isAdmin ||
-      (data.spaceId &&
-        workspace?.settings?.templates?.allowMemberTemplates === true &&
-        templateSpace?.membership?.role &&
-        templateSpace.membership.role !== SpaceRole.READER)),
+    canManageTemplate({
+      isAdmin,
+      allowMemberTemplates:
+        workspace?.settings?.templates?.allowMemberTemplates === true,
+      spaceId: data.spaceId,
+      spaceRole: templateSpace?.membership?.role,
+    }),
   );
 
   const editor = useEditor({
@@ -148,8 +151,8 @@ export default function TemplateEditorPage() {
   }, [data, editor, dirty]);
 
   useEffect(() => {
-    editor?.setEditable(canManageTemplate);
-  }, [canManageTemplate, editor]);
+    editor?.setEditable(canManageCurrentTemplate);
+  }, [canManageCurrentTemplate, editor]);
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -399,7 +402,7 @@ export default function TemplateEditorPage() {
               >
                 {t("Preview")}
               </Button>
-              {canManageTemplate && (
+              {canManageCurrentTemplate && (
                 <>
                   <Button
                     variant="default"
@@ -459,7 +462,7 @@ export default function TemplateEditorPage() {
                 onChange={(event) => patch("title", event.currentTarget.value)}
                 size="md"
                 className={classes.titleInput}
-                readOnly={!canManageTemplate}
+                readOnly={!canManageCurrentTemplate}
               />
               <Textarea
                 mt="md"
@@ -470,10 +473,10 @@ export default function TemplateEditorPage() {
                 }
                 autosize
                 minRows={2}
-                readOnly={!canManageTemplate}
+                readOnly={!canManageCurrentTemplate}
               />
               <Divider my="xl" />
-              {editor && canManageTemplate && (
+              {editor && canManageCurrentTemplate && (
                 <FixedToolbar editor={editor} templateMode />
               )}
               <div className={classes.editorSurface}>
@@ -507,7 +510,7 @@ export default function TemplateEditorPage() {
                   }
                   autosize
                   minRows={3}
-                  readOnly={!canManageTemplate}
+                  readOnly={!canManageCurrentTemplate}
                 />
                 <Textarea
                   label={t("Use when")}
@@ -517,7 +520,7 @@ export default function TemplateEditorPage() {
                   }
                   autosize
                   minRows={2}
-                  readOnly={!canManageTemplate}
+                  readOnly={!canManageCurrentTemplate}
                 />
                 <TextInput
                   label={t("Page title pattern")}
@@ -526,14 +529,14 @@ export default function TemplateEditorPage() {
                   onChange={(event) =>
                     patch("titleTemplate", event.currentTarget.value)
                   }
-                  readOnly={!canManageTemplate}
+                  readOnly={!canManageCurrentTemplate}
                 />
                 <TagsInput
                   label={t("Tags")}
                   value={draft.tags}
                   onChange={(value) => patch("tags", value)}
                   clearable
-                  disabled={!canManageTemplate}
+                  disabled={!canManageCurrentTemplate}
                 />
                 <Select
                   label={t("Scope")}
@@ -544,7 +547,7 @@ export default function TemplateEditorPage() {
                     patch("spaceId", value === "global" ? null : value)
                   }
                   allowDeselect={false}
-                  disabled={!canManageTemplate}
+                  disabled={!canManageCurrentTemplate}
                 />
                 <TextInput
                   label={t("Template key")}
@@ -562,7 +565,7 @@ export default function TemplateEditorPage() {
                   }
                   onInsert={insertVariable}
                   onRename={renameVariable}
-                  readOnly={!canManageTemplate}
+                  readOnly={!canManageCurrentTemplate}
                 />
               </Stack>
             </ScrollArea>

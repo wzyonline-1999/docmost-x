@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Badge,
   Box,
@@ -13,14 +14,18 @@ import {
   Text,
   TextInput,
   Title,
+  Tooltip,
   UnstyledButton,
 } from "@mantine/core";
 import { useDebouncedValue, useDisclosure } from "@mantine/hooks";
+import { modals } from "@mantine/modals";
 import {
   IconAlertCircle,
+  IconArchive,
   IconPlus,
   IconSearch,
   IconTemplate,
+  IconTrash,
 } from "@tabler/icons-react";
 import { useAtomValue } from "jotai";
 import { useState } from "react";
@@ -28,14 +33,20 @@ import { Helmet } from "react-helmet-async";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { CreateTemplateModal } from "@/features/template/components/create-template-modal";
-import { useTemplatesQuery } from "@/features/template/queries/template-query";
+import {
+  useArchiveTemplateMutation,
+  useDeleteTemplateMutation,
+  useTemplatesQuery,
+} from "@/features/template/queries/template-query";
 import type {
   ITemplate,
   TemplateStatus,
 } from "@/features/template/types/template.types";
+import { canManageTemplate } from "@/features/template/utils/template-permission";
 import { getAppName } from "@/lib/config";
 import { timeAgo } from "@/lib/time";
 import { workspaceAtom } from "@/features/user/atoms/current-user-atom";
+import { useGetSpacesQuery } from "@/features/space/queries/space-query";
 import useUserRole from "@/hooks/use-user-role";
 import classes from "./templates.module.css";
 
@@ -52,6 +63,14 @@ export default function TemplatesPage() {
   const { isAdmin } = useUserRole();
   const canCreateTemplates =
     isAdmin || workspace?.settings?.templates?.allowMemberTemplates === true;
+  const allowMemberTemplates =
+    workspace?.settings?.templates?.allowMemberTemplates === true;
+  const { data: spaces } = useGetSpacesQuery({ limit: 100 });
+  const spaceRoleById = new Map(
+    (spaces?.items ?? []).map((space) => [space.id, space.membership?.role]),
+  );
+  const archiveMutation = useArchiveTemplateMutation();
+  const deleteMutation = useDeleteTemplateMutation();
   const [createOpened, { open: openCreate, close: closeCreate }] =
     useDisclosure(false);
   const [query, setQuery] = useState("");
@@ -76,6 +95,34 @@ export default function TemplatesPage() {
     setHistory((current) => current.slice(0, -1));
     setCursor(previous || undefined);
   };
+
+  const archive = (template: ITemplate) =>
+    modals.openConfirmModal({
+      title: t("Archive template"),
+      children: t("Archived templates can no longer create pages."),
+      labels: { confirm: t("Archive"), cancel: t("Cancel") },
+      confirmProps: { color: "orange" },
+      onConfirm: async () => {
+        await archiveMutation.mutateAsync({
+          templateId: template.id,
+          expectedUpdatedAt: template.updatedAt,
+        });
+      },
+    });
+
+  const remove = (template: ITemplate) =>
+    modals.openConfirmModal({
+      title: t("Delete template"),
+      children: t("Are you sure you want to delete this template?"),
+      labels: { confirm: t("Delete"), cancel: t("Cancel") },
+      confirmProps: { color: "red" },
+      onConfirm: async () => {
+        await deleteMutation.mutateAsync({
+          templateId: template.id,
+          expectedUpdatedAt: template.updatedAt,
+        });
+      },
+    });
 
   return (
     <>
@@ -148,13 +195,35 @@ export default function TemplatesPage() {
           </Center>
         ) : data?.items.length ? (
           <Stack gap={0} className={classes.list}>
-            {data.items.map((template) => (
-              <TemplateRow
-                key={template.id}
-                template={template}
-                onClick={() => navigate(`/templates/${template.id}`)}
-              />
-            ))}
+            {data.items.map((template) => {
+              const canManage = canManageTemplate({
+                isAdmin,
+                allowMemberTemplates,
+                spaceId: template.spaceId,
+                spaceRole: template.spaceId
+                  ? spaceRoleById.get(template.spaceId)
+                  : undefined,
+              });
+
+              return (
+                <TemplateRow
+                  key={template.id}
+                  template={template}
+                  canManage={canManage}
+                  archivePending={
+                    archiveMutation.isPending &&
+                    archiveMutation.variables?.templateId === template.id
+                  }
+                  deletePending={
+                    deleteMutation.isPending &&
+                    deleteMutation.variables?.templateId === template.id
+                  }
+                  onClick={() => navigate(`/templates/${template.id}`)}
+                  onArchive={() => archive(template)}
+                  onDelete={() => remove(template)}
+                />
+              );
+            })}
           </Stack>
         ) : (
           <Center mih={260}>
@@ -197,48 +266,96 @@ export default function TemplatesPage() {
 
 function TemplateRow({
   template,
+  canManage,
+  archivePending,
+  deletePending,
   onClick,
+  onArchive,
+  onDelete,
 }: {
   template: ITemplate;
+  canManage: boolean;
+  archivePending: boolean;
+  deletePending: boolean;
   onClick: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
 }) {
   const { t } = useTranslation();
   return (
-    <UnstyledButton className={classes.row} onClick={onClick}>
-      <Box className={classes.icon}>
-        <IconTemplate size={18} />
-      </Box>
-      <div className={classes.summary}>
-        <Group gap="xs" wrap="nowrap">
-          <Text fw={600} size="sm" lineClamp={1}>
-            {template.title}
+    <Box className={classes.row}>
+      <UnstyledButton className={classes.rowMain} onClick={onClick}>
+        <Box className={classes.icon}>
+          <IconTemplate size={18} />
+        </Box>
+        <div className={classes.summary}>
+          <Group gap="xs" wrap="nowrap">
+            <Text fw={600} size="sm" lineClamp={1}>
+              {template.title}
+            </Text>
+            <Badge
+              className={classes.statusBadge}
+              size="xs"
+              variant="light"
+              color={STATUS_COLORS[template.status]}
+            >
+              {t(
+                template.status === "published"
+                  ? "Published"
+                  : template.status === "archived"
+                    ? "Archived"
+                    : "Draft",
+              )}
+            </Badge>
+          </Group>
+          <Text size="sm" c="dimmed" lineClamp={1}>
+            {template.purpose || template.description || t("No description")}
           </Text>
-          <Badge
-            size="xs"
-            variant="light"
-            color={STATUS_COLORS[template.status]}
-          >
-            {t(
-              template.status === "published"
-                ? "Published"
-                : template.status === "archived"
-                  ? "Archived"
-                  : "Draft",
-            )}
-          </Badge>
+        </div>
+      </UnstyledButton>
+      <Group className={classes.metaAndActions} gap="xs" wrap="nowrap">
+        <Group className={classes.meta} gap="xs" wrap="nowrap">
+          <Text size="xs" c="dimmed">
+            {template.spaceId ? t("Space template") : t("Global")}
+          </Text>
+          <Text size="xs" c="dimmed">
+            {timeAgo(new Date(template.updatedAt))}
+          </Text>
         </Group>
-        <Text size="sm" c="dimmed" lineClamp={1}>
-          {template.purpose || template.description || t("No description")}
-        </Text>
-      </div>
-      <Group className={classes.meta} gap="xs" wrap="nowrap">
-        <Text size="xs" c="dimmed">
-          {template.spaceId ? t("Space template") : t("Global")}
-        </Text>
-        <Text size="xs" c="dimmed">
-          {timeAgo(new Date(template.updatedAt))}
-        </Text>
+        {canManage && (
+          <Group className={classes.actions} gap={2} wrap="nowrap">
+            <Tooltip
+              label={
+                template.status === "archived" ? t("Archived") : t("Archive")
+              }
+              withArrow
+            >
+              <ActionIcon
+                variant="subtle"
+                color="orange"
+                aria-label={t("Archive template")}
+                disabled={template.status === "archived" || deletePending}
+                loading={archivePending}
+                onClick={onArchive}
+              >
+                <IconArchive size={17} />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label={t("Delete")} withArrow>
+              <ActionIcon
+                variant="subtle"
+                color="red"
+                aria-label={t("Delete template")}
+                disabled={archivePending}
+                loading={deletePending}
+                onClick={onDelete}
+              >
+                <IconTrash size={17} />
+              </ActionIcon>
+            </Tooltip>
+          </Group>
+        )}
       </Group>
-    </UnstyledButton>
+    </Box>
   );
 }

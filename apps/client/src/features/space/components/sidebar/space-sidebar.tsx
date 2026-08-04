@@ -65,8 +65,14 @@ export function SpaceSidebar() {
   const location = useLocation();
   const [opened, { open: openSettings, close: closeSettings }] =
     useDisclosure(false);
+  const [
+    templatePickerOpened,
+    { open: openTemplatePicker, close: closeTemplatePicker },
+  ] = useDisclosure(false);
   const [mobileSidebarOpened] = useAtom(mobileSidebarAtom);
   const toggleMobileSidebar = useToggleSidebar(mobileSidebarAtom);
+  const hasTemplates = useHasFeature(Feature.TEMPLATES);
+  const upgradeLabel = useUpgradeLabel();
 
   const { spaceSlug } = useParams();
   const { data: space } = useGetSpaceBySlugQuery(spaceSlug);
@@ -78,6 +84,11 @@ export function SpaceSidebar() {
   if (!space) {
     return <></>;
   }
+
+  const canManagePages = spaceAbility.can(
+    SpaceCaslAction.Manage,
+    SpaceCaslSubject.Page,
+  );
 
   function handleCreatePage() {
     handleCreate(null);
@@ -155,10 +166,55 @@ export function SpaceSidebar() {
               </div>
             </UnstyledButton>
 
-            {spaceAbility.can(
-              SpaceCaslAction.Manage,
-              SpaceCaslSubject.Page,
-            ) && (
+            {canManagePages && (
+              <Tooltip
+                label={upgradeLabel}
+                disabled={hasTemplates}
+                position="right"
+                withArrow
+              >
+                <UnstyledButton
+                  className={classes.menu}
+                  onClick={hasTemplates ? openTemplatePicker : undefined}
+                  data-disabled={!hasTemplates || undefined}
+                  aria-disabled={!hasTemplates || undefined}
+                >
+                  <div className={classes.menuItemInner}>
+                    <IconTemplate
+                      size={18}
+                      className={classes.menuItemIcon}
+                      stroke={2}
+                    />
+                    <span>{t("Templates")}</span>
+                  </div>
+                </UnstyledButton>
+              </Tooltip>
+            )}
+
+            {canManagePages && (
+              <UnstyledButton
+                component={Link}
+                to={`/s/${spaceSlug}/trash`}
+                className={clsx(
+                  classes.menu,
+                  location.pathname.toLowerCase() ===
+                    `/s/${spaceSlug}/trash`.toLowerCase()
+                    ? classes.activeButton
+                    : "",
+                )}
+              >
+                <div className={classes.menuItemInner}>
+                  <IconTrash
+                    size={18}
+                    className={classes.menuItemIcon}
+                    stroke={2}
+                  />
+                  <span>{t("Trash")}</span>
+                </div>
+              </UnstyledButton>
+            )}
+
+            {canManagePages && (
               <UnstyledButton
                 className={classes.menu}
                 onClick={() => {
@@ -190,17 +246,14 @@ export function SpaceSidebar() {
             <Group gap="xs">
               <SpaceMenu
                 spaceId={space.id}
-                canManagePages={spaceAbility.can(
-                  SpaceCaslAction.Manage,
-                  SpaceCaslSubject.Page,
-                )}
+                canManagePages={canManagePages}
+                hasTemplates={hasTemplates}
+                upgradeLabel={upgradeLabel}
+                onOpenTemplates={openTemplatePicker}
                 onSpaceSettings={openSettings}
               />
 
-              {spaceAbility.can(
-                SpaceCaslAction.Manage,
-                SpaceCaslSubject.Page,
-              ) && (
+              {canManagePages && (
                 <Tooltip label={t("Create page")} withArrow position="right">
                   <ActionIcon
                     variant="default"
@@ -232,6 +285,16 @@ export function SpaceSidebar() {
         onClose={closeSettings}
         spaceId={space?.slug}
       />
+
+      {hasTemplates && templatePickerOpened && (
+        <ErrorBoundary fallbackRender={() => null}>
+          <TemplatePickerModal
+            opened={templatePickerOpened}
+            onClose={closeTemplatePicker}
+            initialSpaceId={space.id}
+          />
+        </ErrorBoundary>
+      )}
     </>
   );
 }
@@ -239,11 +302,17 @@ export function SpaceSidebar() {
 interface SpaceMenuProps {
   spaceId: string;
   canManagePages: boolean;
+  hasTemplates: boolean;
+  upgradeLabel: string;
+  onOpenTemplates: () => void;
   onSpaceSettings: () => void;
 }
 function SpaceMenu({
   spaceId,
   canManagePages,
+  hasTemplates,
+  upgradeLabel,
+  onOpenTemplates,
   onSpaceSettings,
 }: SpaceMenuProps) {
   const { t } = useTranslation();
@@ -252,13 +321,6 @@ function SpaceMenu({
     useDisclosure(false);
   const [exportOpened, { open: openExportModal, close: closeExportModal }] =
     useDisclosure(false);
-  const [
-    templatePickerOpened,
-    { open: openTemplatePicker, close: closeTemplatePicker },
-  ] = useDisclosure(false);
-  const hasTemplates = useHasFeature(Feature.TEMPLATES);
-  const upgradeLabel = useUpgradeLabel();
-
   const { data: watchStatus } = useSpaceWatchStatusQuery(spaceId);
   const watchMutation = useWatchSpaceMutation();
   const unwatchMutation = useUnwatchSpaceMutation();
@@ -337,7 +399,7 @@ function SpaceMenu({
                 withArrow
               >
                 <Menu.Item
-                  onClick={hasTemplates ? openTemplatePicker : undefined}
+                  onClick={hasTemplates ? onOpenTemplates : undefined}
                   leftSection={<IconTemplate size={16} />}
                   data-disabled={!hasTemplates || undefined}
                   aria-disabled={!hasTemplates || undefined}
@@ -402,16 +464,6 @@ function SpaceMenu({
             onClose={closeExportModal}
           />
         </>
-      )}
-
-      {hasTemplates && templatePickerOpened && (
-        <ErrorBoundary fallbackRender={() => null}>
-          <TemplatePickerModal
-            opened={templatePickerOpened}
-            onClose={closeTemplatePicker}
-            initialSpaceId={spaceId}
-          />
-        </ErrorBoundary>
       )}
     </>
   );
