@@ -46,6 +46,7 @@ import {
 } from '../types/mcp-tool.types';
 import { McpToolInputValidator } from './mcp-tool-input-validator';
 import { McpTemplateService } from './mcp-template.service';
+import { McpPageMoveService } from './mcp-page-move.service';
 
 type PageResult = {
   id: string;
@@ -134,6 +135,7 @@ export class McpToolService {
     private readonly pageRepo: PageRepo,
     private readonly pageService: PageService,
     private readonly pageHistoryMcpService: McpPageHistoryService,
+    private readonly pageMoveMcpService: McpPageMoveService,
     private readonly permissionService: McpPermissionService,
     private readonly templateMcpService: McpTemplateService,
     private readonly vectorIndexService: McpVectorIndexService,
@@ -188,6 +190,7 @@ export class McpToolService {
           additionalProperties: false,
         },
       },
+      ...this.pageMoveMcpService.listTools(),
       {
         name: 'list_page_versions',
         description: 'List saved versions for one readable Docmost page.',
@@ -622,6 +625,12 @@ export class McpToolService {
             ? args.targetSpaceId
             : undefined;
         const deniedSpaceId = spaceId ?? targetSpaceId;
+        const moveResourceType =
+          params.name === 'move_pages'
+            ? 'page_batch'
+            : params.name === 'move_page'
+              ? 'page'
+              : undefined;
         await this.auditService.logPermissionDenied({
           workspaceId: context.client.workspaceId,
           clientId: context.client.id,
@@ -637,9 +646,11 @@ export class McpToolService {
                 ? 'template'
                 : pageId
                   ? 'page'
-                  : deniedSpaceId
-                    ? 'space'
-                    : 'permission',
+                  : moveResourceType
+                    ? moveResourceType
+                    : deniedSpaceId
+                      ? 'space'
+                      : 'permission',
           resourceId:
             attachmentId ?? historyId ?? templateId ?? pageId ?? deniedSpaceId,
           requestId: context.requestId,
@@ -687,6 +698,11 @@ export class McpToolService {
         return this.listPages(args, context);
       case 'get_page':
         return this.getPage(args, context);
+      case 'get_page_tree':
+      case 'preview_page_move':
+      case 'move_page':
+      case 'move_pages':
+        return this.pageMoveMcpService.callTool(name, args, context);
       case 'list_page_versions':
         return this.pageHistoryMcpService.listPageVersions(
           {

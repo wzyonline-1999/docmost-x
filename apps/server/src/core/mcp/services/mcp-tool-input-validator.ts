@@ -14,10 +14,12 @@ const UUID_FIELDS = new Set([
   'jobId',
   'pageId',
   'parentPageId',
+  'referencePageId',
   'rootPageId',
   'spaceId',
   'sourcePageId',
   'targetSpaceId',
+  'targetParentPageId',
   'templateId',
   'toHistoryId',
 ]);

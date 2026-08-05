@@ -68,6 +68,7 @@ describe('McpToolService', () => {
       pageRepo?: unknown;
       pageService?: unknown;
       pageHistoryMcpService?: unknown;
+      pageMoveMcpService?: unknown;
       permissionService?: unknown;
       templateMcpService?: unknown;
       vectorIndexService?: unknown;
@@ -89,6 +90,22 @@ describe('McpToolService', () => {
       (overrides.pageService ?? null) as never,
       (overrides.pageHistoryMcpService ?? {
         capturePageSnapshot: jest.fn().mockResolvedValue([]),
+      }) as never,
+      (overrides.pageMoveMcpService ?? {
+        listTools: jest.fn(() =>
+          ['get_page_tree', 'preview_page_move', 'move_page', 'move_pages'].map(
+            (name) => ({
+              name,
+              description: name,
+              inputSchema: {
+                type: 'object',
+                properties: {},
+                additionalProperties: false,
+              },
+            }),
+          ),
+        ),
+        callTool: jest.fn(),
       }) as never,
       (overrides.permissionService ?? null) as never,
       (overrides.templateMcpService ?? {
@@ -167,6 +184,10 @@ describe('McpToolService', () => {
       'list_spaces',
       'list_pages',
       'get_page',
+      'get_page_tree',
+      'preview_page_move',
+      'move_page',
+      'move_pages',
       'list_page_versions',
       'get_page_version',
       'diff_page_versions',

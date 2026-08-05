@@ -5,6 +5,8 @@ export const MCP_MUTATION_TOOLS: ReadonlySet<string> = new Set([
   'create_page',
   'update_page',
   'append_page',
+  'move_page',
+  'move_pages',
   'delete_page',
   'restore_page',
   'reindex_page',

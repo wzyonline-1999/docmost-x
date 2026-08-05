@@ -29,6 +29,7 @@ import { McpVectorReconciliationService } from './services/mcp-vector-reconcilia
 import { McpRetentionService } from './services/mcp-retention.service';
 import { TemplateModule } from '../template/template.module';
 import { McpTemplateService } from './services/mcp-template.service';
+import { McpPageMoveService } from './services/mcp-page-move.service';
 
 @Module({
   imports: [AttachmentModule, PageModule, StorageModule, TemplateModule],
@@ -49,6 +50,7 @@ import { McpTemplateService } from './services/mcp-template.service';
     McpIdempotencyService,
     McpMetricsService,
     McpPageHistoryService,
+    McpPageMoveService,
     McpPermissionService,
     McpRateLimitService,
     McpRetentionService,
@@ -73,6 +75,7 @@ import { McpTemplateService } from './services/mcp-template.service';
     McpIdempotencyService,
     McpMetricsService,
     McpPageHistoryService,
+    McpPageMoveService,
     McpPermissionService,
     McpRateLimitService,
     McpRetentionService,
