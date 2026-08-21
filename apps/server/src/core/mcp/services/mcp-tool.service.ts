@@ -49,6 +49,7 @@ import { McpTemplateService } from './mcp-template.service';
 import { McpPageMoveService } from './mcp-page-move.service';
 import { McpCatalogBundleService } from './mcp-catalog-bundle.service';
 import { McpCatalogV2Service } from './mcp-catalog-v2.service';
+import { McpCatalogV3Service } from './mcp-catalog-v3.service';
 
 type PageResult = {
   id: string;
@@ -140,6 +141,7 @@ export class McpToolService {
     private readonly pageMoveMcpService: McpPageMoveService,
     private readonly catalogBundleService: McpCatalogBundleService,
     private readonly catalogV2Service: McpCatalogV2Service,
+    private readonly catalogV3Service: McpCatalogV3Service,
     private readonly permissionService: McpPermissionService,
     private readonly templateMcpService: McpTemplateService,
     private readonly vectorIndexService: McpVectorIndexService,
@@ -197,6 +199,7 @@ export class McpToolService {
       ...this.pageMoveMcpService.listTools(),
       ...this.catalogBundleService.listTools(),
       ...this.catalogV2Service.listTools(),
+      ...this.catalogV3Service.listTools(),
       {
         name: 'list_page_versions',
         description: 'List saved versions for one readable Docmost page.',
@@ -685,7 +688,9 @@ export class McpToolService {
       ? this.catalogBundleService.summarize(result as never)
       : this.catalogV2Service.isCatalogV2Tool(params.name)
         ? this.catalogV2Service.summarize(result as never)
-        : JSON.stringify(result, null, 2);
+        : this.catalogV3Service.isCatalogV3Tool(params.name)
+          ? this.catalogV3Service.summarize(result as never)
+          : JSON.stringify(result, null, 2);
     return {
       content: [
         {
@@ -720,6 +725,10 @@ export class McpToolService {
       case 'resolve_catalog_bundle_v2':
       case 'resolve_catalog_delta_v2':
         return this.catalogV2Service.callTool(name, args, context);
+      case 'begin_catalog_resolution':
+      case 'resolve_catalog_bundle_v3':
+      case 'resolve_catalog_delta_v3':
+        return this.catalogV3Service.callTool(name, args, context);
       case 'list_page_versions':
         return this.pageHistoryMcpService.listPageVersions(
           {

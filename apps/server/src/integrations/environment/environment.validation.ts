@@ -226,6 +226,16 @@ export class EnvironmentVariables {
   MCP_CATALOG_CHALLENGE_TTL_SECONDS: string;
 
   @IsOptional()
+  @IsNumberString()
+  @IsNumericStringInRange(10, 600)
+  MCP_CATALOG_TICKET_TTL_SECONDS: string;
+
+  @IsOptional()
+  @IsNumberString()
+  @IsNumericStringInRange(10_000, 300_000)
+  MCP_CATALOG_MAX_RESOLUTION_WINDOW_MS: string;
+
+  @IsOptional()
   @IsIn(['true', 'false'])
   @IsString()
   VECTOR_SEARCH_ENABLED: string;

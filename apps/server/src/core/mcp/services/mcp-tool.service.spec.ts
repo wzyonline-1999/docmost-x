@@ -71,6 +71,7 @@ describe('McpToolService', () => {
       pageMoveMcpService?: unknown;
       catalogBundleService?: unknown;
       catalogV2Service?: unknown;
+      catalogV3Service?: unknown;
       permissionService?: unknown;
       templateMcpService?: unknown;
       vectorIndexService?: unknown;
@@ -147,6 +148,32 @@ describe('McpToolService', () => {
           ),
         ),
         summarize: jest.fn(() => 'Catalog v2 summary'),
+        callTool: jest.fn(),
+      }) as never,
+      (overrides.catalogV3Service ?? {
+        listTools: jest.fn(() =>
+          [
+            'begin_catalog_resolution',
+            'resolve_catalog_bundle_v3',
+            'resolve_catalog_delta_v3',
+          ].map((name) => ({
+            name,
+            description: name,
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              additionalProperties: false,
+            },
+          })),
+        ),
+        isCatalogV3Tool: jest.fn((name) =>
+          [
+            'begin_catalog_resolution',
+            'resolve_catalog_bundle_v3',
+            'resolve_catalog_delta_v3',
+          ].includes(name),
+        ),
+        summarize: jest.fn(() => 'Catalog v3 summary'),
         callTool: jest.fn(),
       }) as never,
       (overrides.permissionService ?? null) as never,
@@ -234,6 +261,9 @@ describe('McpToolService', () => {
       'resolve_catalog_delta',
       'resolve_catalog_bundle_v2',
       'resolve_catalog_delta_v2',
+      'begin_catalog_resolution',
+      'resolve_catalog_bundle_v3',
+      'resolve_catalog_delta_v3',
       'list_page_versions',
       'get_page_version',
       'diff_page_versions',

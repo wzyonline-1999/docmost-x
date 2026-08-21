@@ -376,6 +376,23 @@ export class EnvironmentService {
     );
   }
 
+  getMcpCatalogTicketTtlSeconds(): number {
+    return parseInt(
+      this.configService.get<string>('MCP_CATALOG_TICKET_TTL_SECONDS', '120'),
+      10,
+    );
+  }
+
+  getMcpCatalogMaxResolutionWindowMs(): number {
+    return parseInt(
+      this.configService.get<string>(
+        'MCP_CATALOG_MAX_RESOLUTION_WINDOW_MS',
+        '120000',
+      ),
+      10,
+    );
+  }
+
   isVectorSearchEnabled(): boolean {
     return (
       this.configService

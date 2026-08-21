@@ -60,6 +60,8 @@ describe('environment validation', () => {
           'catalog-ed25519-2026-07': encoded,
         }),
         MCP_CATALOG_CHALLENGE_TTL_SECONDS: '86400',
+        MCP_CATALOG_TICKET_TTL_SECONDS: '120',
+        MCP_CATALOG_MAX_RESOLUTION_WINDOW_MS: '120000',
       }),
     ).toEqual([]);
   });
@@ -68,6 +70,8 @@ describe('environment validation', () => {
     ['MCP_CATALOG_SIGNING_SECRET', 'too-short'],
     ['MCP_CATALOG_CHALLENGE_TTL_SECONDS', '59'],
     ['MCP_CATALOG_CHALLENGE_TTL_SECONDS', '2592001'],
+    ['MCP_CATALOG_TICKET_TTL_SECONDS', '9'],
+    ['MCP_CATALOG_MAX_RESOLUTION_WINDOW_MS', '9999'],
     ['MCP_CATALOG_SIGNING_KEY_ID', 'invalid key id'],
     ['MCP_CATALOG_PREVIOUS_PUBLIC_KEYS', '{not-json'],
     ['MCP_CATALOG_PREVIOUS_PUBLIC_KEYS', '{"old-key":"not-a-key"}'],

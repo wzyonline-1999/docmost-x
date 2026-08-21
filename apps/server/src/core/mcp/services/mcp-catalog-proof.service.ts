@@ -9,6 +9,7 @@ import {
   createPrivateKey,
   createPublicKey,
   hkdfSync,
+  randomUUID,
   sign as signBytes,
   verify as verifyBytes,
   type KeyObject,
@@ -23,6 +24,14 @@ import {
   CatalogFreshnessProofV2,
   CatalogFreshnessProofV2Unsigned,
 } from '../types/mcp-catalog-v2.types';
+import {
+  CATALOG_FRESHNESS_V3_SCHEMA_VERSION,
+  CATALOG_RESOLUTION_TICKET_SCHEMA_VERSION,
+  CatalogFreshnessProofV3,
+  CatalogFreshnessProofV3Unsigned,
+  CatalogResolutionTicket,
+  CatalogResolutionTicketUnsigned,
+} from '../types/mcp-catalog-v3.types';
 
 const ED25519_PKCS8_SEED_PREFIX = Buffer.from(
   '302e020100300506032b657004220420',
@@ -106,6 +115,120 @@ export class McpCatalogProofService {
     };
   }
 
+  async issueResolutionTicket(input: {
+    clientId: string;
+    challenge: string;
+    catalogRootPageId: string;
+    environment: string;
+    authorizationContextSha256: string;
+  }): Promise<CatalogResolutionTicket> {
+    const clock = await this.reserveChallenge(
+      'v3',
+      input.clientId,
+      input.challenge,
+    );
+    const ttlSeconds = this.environmentService.getMcpCatalogTicketTtlSeconds();
+    const material = this.getSigningMaterial();
+    const unsigned: CatalogResolutionTicketUnsigned = {
+      schema_version: CATALOG_RESOLUTION_TICKET_SCHEMA_VERSION,
+      signature_algorithm: CATALOG_SIGNATURE_ALGORITHM,
+      public_key_format: CATALOG_PUBLIC_KEY_FORMAT,
+      public_key: material.publicKeyEncoded,
+      key_id: material.keyId,
+      ticket_id: randomUUID(),
+      issued_at: clock.resolutionStartedAt.toISOString(),
+      expires_at: new Date(
+        clock.resolutionStartedAt.getTime() + ttlSeconds * 1_000,
+      ).toISOString(),
+      challenge: input.challenge,
+      catalog_root_page_id: input.catalogRootPageId,
+      environment: input.environment,
+      authorization_context_sha256: input.authorizationContextSha256,
+    };
+    const ticket = this.signValue(
+      unsigned,
+      material,
+    ) as CatalogResolutionTicket;
+    const storedValue = this.ticketStorageValue(input.clientId, ticket);
+    let accepted: string | null;
+    try {
+      accepted = await this.redis.set(
+        this.ticketRedisKey(ticket.ticket_id),
+        storedValue,
+        'EX',
+        ttlSeconds,
+        'NX',
+      );
+    } catch {
+      throw new InternalServerErrorException(
+        'Catalog resolution ticket storage is unavailable',
+      );
+    }
+    if (accepted !== 'OK') {
+      throw new InternalServerErrorException(
+        'Catalog resolution ticket could not be issued',
+      );
+    }
+    return ticket;
+  }
+
+  async consumeResolutionTicket(
+    clientId: string,
+    ticket: CatalogResolutionTicket,
+    expected: {
+      catalogRootPageId: string;
+      environment: string;
+      authorizationContextSha256: string;
+    },
+  ): Promise<CatalogResolutionTicket> {
+    if (!this.verifyResolutionTicket(ticket)) {
+      throw new BadRequestException('Catalog resolution ticket is invalid');
+    }
+    const now = Date.now();
+    const issuedAt = Date.parse(ticket.issued_at);
+    const expiresAt = Date.parse(ticket.expires_at);
+    const maxWindowMs =
+      this.environmentService.getMcpCatalogMaxResolutionWindowMs();
+    if (
+      !Number.isFinite(issuedAt) ||
+      !Number.isFinite(expiresAt) ||
+      issuedAt > now + 1_000 ||
+      expiresAt <= now ||
+      expiresAt <= issuedAt ||
+      now - issuedAt > maxWindowMs
+    ) {
+      throw new BadRequestException(
+        'Catalog resolution ticket is expired or outside the trusted window',
+      );
+    }
+    if (
+      ticket.catalog_root_page_id !== expected.catalogRootPageId ||
+      ticket.environment !== expected.environment ||
+      ticket.authorization_context_sha256 !==
+        expected.authorizationContextSha256
+    ) {
+      throw new BadRequestException(
+        'Catalog resolution ticket does not match the requested scope',
+      );
+    }
+    let storedValue: string | null;
+    try {
+      storedValue = await this.redis.getdel(
+        this.ticketRedisKey(ticket.ticket_id),
+      );
+    } catch {
+      throw new InternalServerErrorException(
+        'Catalog resolution ticket replay protection is unavailable',
+      );
+    }
+    if (storedValue !== this.ticketStorageValue(clientId, ticket)) {
+      throw new BadRequestException(
+        'Catalog resolution ticket was not issued for this client or was already used',
+      );
+    }
+    return ticket;
+  }
+
   signProof(
     proof: Omit<
       CatalogFreshnessProofV2Unsigned,
@@ -131,6 +254,28 @@ export class McpCatalogProofService {
       material.privateKey,
     ).toString('base64url');
     return { ...unsigned, signature };
+  }
+
+  signProofV3(
+    proof: Omit<
+      CatalogFreshnessProofV3Unsigned,
+      | 'schema_version'
+      | 'signature_algorithm'
+      | 'public_key_format'
+      | 'public_key'
+      | 'key_id'
+    >,
+  ): CatalogFreshnessProofV3 {
+    const material = this.getSigningMaterial();
+    const unsigned: CatalogFreshnessProofV3Unsigned = {
+      schema_version: CATALOG_FRESHNESS_V3_SCHEMA_VERSION,
+      signature_algorithm: CATALOG_SIGNATURE_ALGORITHM,
+      public_key_format: CATALOG_PUBLIC_KEY_FORMAT,
+      public_key: material.publicKeyEncoded,
+      key_id: material.keyId,
+      ...proof,
+    };
+    return this.signValue(unsigned, material) as CatalogFreshnessProofV3;
   }
 
   verifyProof(proof: CatalogFreshnessProofV2): boolean {
@@ -163,6 +308,17 @@ export class McpCatalogProofService {
       Buffer.from(canonicalJson(unsigned), 'utf8'),
       publicKey,
       signature,
+    );
+  }
+
+  verifyProofV3(proof: CatalogFreshnessProofV3): boolean {
+    return this.verifySignedValue(proof, CATALOG_FRESHNESS_V3_SCHEMA_VERSION);
+  }
+
+  verifyResolutionTicket(ticket: CatalogResolutionTicket): boolean {
+    return this.verifySignedValue(
+      ticket,
+      CATALOG_RESOLUTION_TICKET_SCHEMA_VERSION,
     );
   }
 
@@ -217,6 +373,105 @@ export class McpCatalogProofService {
       publicKeyEncoded,
     };
     return this.signingMaterial;
+  }
+
+  private async reserveChallenge(
+    version: string,
+    clientId: string,
+    challenge: string,
+  ): Promise<CatalogResolutionClock> {
+    const challengeHash = createHash('sha256')
+      .update(clientId, 'utf8')
+      .update('\0')
+      .update(challenge, 'utf8')
+      .digest('hex');
+    let accepted: string | null;
+    try {
+      accepted = await this.redis.set(
+        `docmost:mcp:catalog-challenge:${version}:${challengeHash}`,
+        '1',
+        'EX',
+        this.environmentService.getMcpCatalogChallengeTtlSeconds(),
+        'NX',
+      );
+    } catch {
+      throw new InternalServerErrorException(
+        'Catalog challenge replay protection is unavailable',
+      );
+    }
+    if (accepted !== 'OK') {
+      throw new BadRequestException('Catalog challenge has already been used');
+    }
+    return {
+      resolutionStartedAt: new Date(),
+      monotonicStartedAt: performance.now(),
+    };
+  }
+
+  private signValue(
+    unsigned: Record<string, unknown>,
+    material: SigningMaterial,
+  ): Record<string, unknown> & { signature: string } {
+    const signature = signBytes(
+      null,
+      Buffer.from(canonicalJson(unsigned), 'utf8'),
+      material.privateKey,
+    ).toString('base64url');
+    return { ...unsigned, signature };
+  }
+
+  private verifySignedValue(
+    value: Record<string, unknown> & {
+      schema_version: string;
+      signature_algorithm: string;
+      public_key_format: string;
+      public_key: string;
+      key_id: string;
+      signature: string;
+    },
+    schemaVersion: string,
+  ): boolean {
+    if (
+      value.schema_version !== schemaVersion ||
+      value.signature_algorithm !== CATALOG_SIGNATURE_ALGORITHM ||
+      value.public_key_format !== CATALOG_PUBLIC_KEY_FORMAT
+    ) {
+      return false;
+    }
+    const publicKeyEncoded = this.resolveTrustedPublicKey(value.key_id);
+    if (!publicKeyEncoded || publicKeyEncoded !== value.public_key)
+      return false;
+    try {
+      const publicKey = createPublicKey({
+        key: Buffer.from(publicKeyEncoded, 'base64url'),
+        format: 'der',
+        type: 'spki',
+      });
+      const { signature, ...unsigned } = value;
+      return verifyBytes(
+        null,
+        Buffer.from(canonicalJson(unsigned), 'utf8'),
+        publicKey,
+        Buffer.from(signature, 'base64url'),
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private ticketRedisKey(ticketId: string): string {
+    return `docmost:mcp:catalog-ticket:v1:${ticketId}`;
+  }
+
+  private ticketStorageValue(
+    clientId: string,
+    ticket: CatalogResolutionTicket,
+  ): string {
+    return createHash('sha256')
+      .update(clientId, 'utf8')
+      .update('\0')
+      .update(canonicalJson(ticket), 'utf8')
+      .digest('hex');
   }
 
   private resolveTrustedPublicKey(keyId: string): string | undefined {
