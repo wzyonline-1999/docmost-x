@@ -59,6 +59,18 @@ const COVERAGE_GROUPS: CoverageGroup[] = [
     },
   },
   {
+    name: 'Catalog Bundle and freshness',
+    files: [
+      'core/mcp/services/catalog-contract.registry.ts',
+      'core/mcp/services/mcp-catalog-bundle.service.ts',
+      'core/mcp/services/mcp-catalog-snapshot.service.ts',
+    ],
+    minimum: {
+      lines: 75,
+      branches: 65,
+    },
+  },
+  {
     name: 'Web search',
     files: [
       'core/search/search.service.ts',
@@ -92,7 +104,14 @@ async function main(): Promise<void> {
     string,
     CoverageEntry
   >;
-  const results = COVERAGE_GROUPS.map((group) => evaluateGroup(summary, group));
+  const groups = process.argv.includes('--mcp-only')
+    ? COVERAGE_GROUPS.filter(
+        (group) =>
+          group.name.startsWith('MCP ') ||
+          group.name === 'Catalog Bundle and freshness',
+      )
+    : COVERAGE_GROUPS;
+  const results = groups.map((group) => evaluateGroup(summary, group));
 
   process.stdout.write(`${JSON.stringify(results, null, 2)}\n`);
 }
@@ -158,6 +177,9 @@ function normalize(filePath: string): string {
 
 main().catch((error: unknown) => {
   const errorType = error instanceof Error ? error.name : typeof error;
-  process.stderr.write(`Quality coverage gate failed (${errorType})\n`);
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(
+    `Quality coverage gate failed (${errorType}): ${message}\n`,
+  );
   process.exitCode = 1;
 });

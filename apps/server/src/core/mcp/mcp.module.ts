@@ -30,6 +30,9 @@ import { McpRetentionService } from './services/mcp-retention.service';
 import { TemplateModule } from '../template/template.module';
 import { McpTemplateService } from './services/mcp-template.service';
 import { McpPageMoveService } from './services/mcp-page-move.service';
+import { CatalogContractRegistry } from './services/catalog-contract.registry';
+import { McpCatalogBundleService } from './services/mcp-catalog-bundle.service';
+import { McpCatalogSnapshotService } from './services/mcp-catalog-snapshot.service';
 
 @Module({
   imports: [AttachmentModule, PageModule, StorageModule, TemplateModule],
@@ -40,8 +43,11 @@ import { McpPageMoveService } from './services/mcp-page-move.service';
     McpMetricsController,
   ],
   providers: [
+    CatalogContractRegistry,
     McpAdminService,
     McpAttachmentService,
+    McpCatalogBundleService,
+    McpCatalogSnapshotService,
     McpActorAccessService,
     McpAuditService,
     McpEffectivePermissionService,
@@ -65,8 +71,11 @@ import { McpPageMoveService } from './services/mcp-page-move.service';
     McpVectorTextService,
   ],
   exports: [
+    CatalogContractRegistry,
     McpAdminService,
     McpAttachmentService,
+    McpCatalogBundleService,
+    McpCatalogSnapshotService,
     McpActorAccessService,
     McpAuditService,
     McpEffectivePermissionService,

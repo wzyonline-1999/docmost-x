@@ -69,6 +69,7 @@ describe('McpToolService', () => {
       pageService?: unknown;
       pageHistoryMcpService?: unknown;
       pageMoveMcpService?: unknown;
+      catalogBundleService?: unknown;
       permissionService?: unknown;
       templateMcpService?: unknown;
       vectorIndexService?: unknown;
@@ -105,6 +106,22 @@ describe('McpToolService', () => {
             }),
           ),
         ),
+        callTool: jest.fn(),
+      }) as never,
+      (overrides.catalogBundleService ?? {
+        listTools: jest.fn(() =>
+          ['resolve_catalog_bundle', 'resolve_catalog_delta'].map((name) => ({
+            name,
+            description: name,
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              additionalProperties: false,
+            },
+          })),
+        ),
+        isCatalogTool: jest.fn((name) => name.startsWith('resolve_catalog_')),
+        summarize: jest.fn(() => 'Catalog summary'),
         callTool: jest.fn(),
       }) as never,
       (overrides.permissionService ?? null) as never,
@@ -188,6 +205,8 @@ describe('McpToolService', () => {
       'preview_page_move',
       'move_page',
       'move_pages',
+      'resolve_catalog_bundle',
+      'resolve_catalog_delta',
       'list_page_versions',
       'get_page_version',
       'diff_page_versions',
@@ -254,6 +273,41 @@ describe('McpToolService', () => {
     expect(definitions.get('list_pages')?.description).toContain(
       'immediate children',
     );
+  });
+
+  it('returns Catalog payloads only in structuredContent', async () => {
+    const payload = {
+      schema_version: 'catalog-bundle.v1',
+      pages: [{ markdown: 'large catalog page' }],
+    };
+    const catalogBundleService = {
+      listTools: jest.fn(() => [
+        {
+          name: 'resolve_catalog_bundle',
+          description: 'bundle',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+      ]),
+      isCatalogTool: jest.fn(() => true),
+      summarize: jest.fn(() => 'Catalog bundle summary'),
+      callTool: jest.fn().mockResolvedValue(payload),
+    };
+    const service = createService({ catalogBundleService });
+
+    const result = await service.callTool(
+      { name: 'resolve_catalog_bundle', arguments: {} },
+      context,
+    );
+
+    expect(result.structuredContent).toBe(payload);
+    expect(result.content).toEqual([
+      { type: 'text', text: 'Catalog bundle summary' },
+    ]);
+    expect(result.content[0].text).not.toContain('large catalog page');
   });
 
   it.each([

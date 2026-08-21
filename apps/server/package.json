@@ -30,7 +30,7 @@
     "test:mcp:sdk": "jest --runInBand src/core/mcp/mcp-sdk-compat.spec.ts",
     "test:mcp:write-path": "jest --runInBand src/core/page/services/page.service.optimistic-lock.spec.ts src/database/repos/page/page.repo.optimistic-lock.spec.ts src/collaboration/extensions/persistence.extension.spec.ts",
     "test:mcp:coverage": "jest --runInBand --coverage --coverageProvider=v8 --coverageReporters=json-summary --coverageReporters=text-summary --collectCoverageFrom=core/mcp/**/*.ts --testPathPatterns=core/mcp --testPathIgnorePatterns=mcp-sdk-compat.spec.ts",
-    "test:mcp:coverage:check": "node --import tsx test/mcp-coverage-gate.ts",
+    "test:mcp:coverage:check": "node --import tsx test/mcp-coverage-gate.ts --mcp-only",
     "test:quality:coverage": "jest --runInBand --coverage --coverageProvider=v8 --coverageReporters=json-summary --coverageReporters=text-summary --collectCoverageFrom=core/mcp/**/*.ts --collectCoverageFrom=core/search/search.service.ts --collectCoverageFrom=core/search/search-rate-limit.service.ts --collectCoverageFrom=core/attachment/services/attachment.service.ts --collectCoverageFrom=core/attachment/services/attachment-lifecycle.service.ts --collectCoverageFrom=core/attachment/services/attachment-content-index.service.ts --testPathPatterns='core/(mcp|search|attachment)' --testPathIgnorePatterns=mcp-sdk-compat.spec.ts",
     "test:quality:coverage:check": "node --import tsx test/mcp-coverage-gate.ts",
     "test:mcp:codex": "node --import tsx test/mcp-codex-acceptance.ts",
@@ -134,6 +134,7 @@
     "undici": "7.28.0",
     "unpdf": "1.6.2",
     "ws": "8.21.0",
+    "yaml": "2.8.3",
     "yauzl": "3.4.0",
     "zod": "4.3.6"
   },
