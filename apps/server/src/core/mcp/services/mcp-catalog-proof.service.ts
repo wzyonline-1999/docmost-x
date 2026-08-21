@@ -2,6 +2,8 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { RedisService } from '@nestjs-labs/nestjs-ioredis';
 import {
@@ -72,7 +74,8 @@ export function canonicalJson(value: unknown): string {
 }
 
 @Injectable()
-export class McpCatalogProofService {
+export class McpCatalogProofService implements OnModuleInit {
+  private readonly logger = new Logger(McpCatalogProofService.name);
   private readonly redis: Redis;
   private signingMaterial?: SigningMaterial;
 
@@ -81,6 +84,19 @@ export class McpCatalogProofService {
     redisService: RedisService,
   ) {
     this.redis = redisService.getOrThrow();
+  }
+
+  onModuleInit(): void {
+    const material = this.getSigningMaterial();
+    this.logger.log(
+      JSON.stringify({
+        event: 'mcp.catalog.signing_key.ready',
+        signatureAlgorithm: CATALOG_SIGNATURE_ALGORITHM,
+        publicKeyFormat: CATALOG_PUBLIC_KEY_FORMAT,
+        keyId: material.keyId,
+        publicKey: material.publicKeyEncoded,
+      }),
+    );
   }
 
   async beginResolution(

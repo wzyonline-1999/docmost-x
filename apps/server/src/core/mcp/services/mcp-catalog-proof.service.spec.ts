@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { McpCatalogProofService } from './mcp-catalog-proof.service';
 
 const ROOT_ID = '11111111-1111-4111-8111-111111111111';
@@ -55,6 +55,26 @@ function proofInput() {
 }
 
 describe('McpCatalogProofService', () => {
+  it('reports the non-sensitive signing anchor during application startup', () => {
+    const log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
+    const { service } = createHarness();
+
+    service.onModuleInit();
+
+    const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(payload).toEqual({
+      event: 'mcp.catalog.signing_key.ready',
+      signatureAlgorithm: 'ed25519',
+      publicKeyFormat: 'spki-der-base64url',
+      keyId: expect.stringMatching(/^catalog-ed25519-/),
+      publicKey: expect.any(String),
+    });
+    expect(JSON.stringify(payload)).not.toContain(
+      'catalog-signing-secret-with-more-than-32-bytes',
+    );
+    log.mockRestore();
+  });
+
   it('uses Redis NX replay protection before returning a trusted start clock', async () => {
     const { service, redis } = createHarness();
 
