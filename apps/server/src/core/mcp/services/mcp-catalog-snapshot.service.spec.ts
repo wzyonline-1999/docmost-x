@@ -67,6 +67,8 @@ describe('McpCatalogSnapshotService', () => {
     expect(sql).toContain(
       'start transaction isolation level repeatable read read only',
     );
+    expect(sql).toContain('set_config');
+    expect(sql).toContain('statement_timeout');
     expect(sql).toContain('transaction_timestamp()');
     expect(sql).toContain('mcp_client_space_permissions');
     expect(sql).toContain('group_users');
@@ -183,6 +185,18 @@ describe('McpCatalogSnapshotService', () => {
     );
   });
 
+  it('rejects a Catalog subtree that exceeds the traversal depth limit', async () => {
+    const harness = createHarness(
+      preSubtreeResponses([
+        subtreeRow(ROOT_ID, null, 1, CATALOG_LIMITS.maxTraversalDepth + 1),
+      ]),
+    );
+
+    await expect(harness.service.capture(ROOT_ID, client)).rejects.toThrow(
+      `${CATALOG_LIMITS.maxTraversalDepth} levels`,
+    );
+  });
+
   it('masks rows that escape the requested workspace or space', async () => {
     const harness = createHarness(
       preSubtreeResponses([
@@ -231,6 +245,16 @@ describe('McpCatalogSnapshotService', () => {
         normalized === 'rollback'
       ) {
         return { command: 'TRANSACTION', rowCount: 0, rows: [] };
+      }
+      if (
+        normalized.includes('set_config') &&
+        normalized.includes('statement_timeout')
+      ) {
+        return {
+          command: 'SELECT',
+          rowCount: 1,
+          rows: [{ setConfig: '10000' }],
+        };
       }
       const rows = scripted.shift();
       if (!rows) {
@@ -297,6 +321,7 @@ describe('McpCatalogSnapshotService', () => {
     id: string,
     parentPageId: string | null,
     contentBytes: number | string | bigint,
+    depth = parentPageId === null ? 0 : 1,
   ): Record<string, unknown> {
     return {
       id,
@@ -306,6 +331,7 @@ describe('McpCatalogSnapshotService', () => {
       workspaceId: WORKSPACE_ID,
       updatedAt: UPDATED_AT,
       contentBytes,
+      depth,
     };
   }
 

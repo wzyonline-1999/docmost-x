@@ -31,6 +31,9 @@ REDIS_URL=redis://redis:6379
 MCP_PUBLIC_BASE_URL=https://docs.example.com/mcp
 MCP_TOKEN_HASH_SECRET=<independent-vault-secret-at-least-32-characters>
 MCP_METRICS_TOKEN=<independent-vault-secret-at-least-32-characters>
+MCP_CATALOG_SIGNING_SECRET=<shared-replica-secret-at-least-32-characters>
+MCP_CATALOG_SIGNING_KEY_ID=catalog-ed25519-2026-08
+MCP_CATALOG_CHALLENGE_TTL_SECONDS=86400
 MCP_ENABLED=false
 VECTOR_SEARCH_ENABLED=false
 EMBEDDING_BASE_URL=https://api.openai.com/v1
@@ -39,6 +42,16 @@ EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_DIMENSIONS=1536
 VECTOR_EXACT_CHUNK_THRESHOLD=4000
 ```
+
+All application replicas must share `MCP_CATALOG_SIGNING_SECRET` and Redis.
+When the dedicated secret is omitted, Catalog v2 deterministically derives its
+Ed25519 key from the shared `APP_SECRET`. During a rotation, expose the old
+public key through `MCP_CATALOG_PREVIOUS_PUBLIC_KEYS` as a JSON object keyed by
+its former key ID until every accepted Delta base proof has expired. Never put
+a private key or signing secret in that public-key map.
+Catalog signing key IDs and previous Ed25519 public keys are validated during
+application startup. Catalog v2 clients must use a fresh challenge after an
+ambiguous transport failure instead of replaying the failed request.
 
 `EMBEDDING_DIMENSIONS` is fixed at 1536 in this release. Changing it requires a
 new database migration and a complete vector reindex.

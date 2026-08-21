@@ -70,6 +70,7 @@ describe('McpToolService', () => {
       pageHistoryMcpService?: unknown;
       pageMoveMcpService?: unknown;
       catalogBundleService?: unknown;
+      catalogV2Service?: unknown;
       permissionService?: unknown;
       templateMcpService?: unknown;
       vectorIndexService?: unknown;
@@ -120,8 +121,32 @@ describe('McpToolService', () => {
             },
           })),
         ),
-        isCatalogTool: jest.fn((name) => name.startsWith('resolve_catalog_')),
+        isCatalogTool: jest.fn((name) =>
+          ['resolve_catalog_bundle', 'resolve_catalog_delta'].includes(name),
+        ),
         summarize: jest.fn(() => 'Catalog summary'),
+        callTool: jest.fn(),
+      }) as never,
+      (overrides.catalogV2Service ?? {
+        listTools: jest.fn(() =>
+          ['resolve_catalog_bundle_v2', 'resolve_catalog_delta_v2'].map(
+            (name) => ({
+              name,
+              description: name,
+              inputSchema: {
+                type: 'object',
+                properties: {},
+                additionalProperties: false,
+              },
+            }),
+          ),
+        ),
+        isCatalogV2Tool: jest.fn((name) =>
+          ['resolve_catalog_bundle_v2', 'resolve_catalog_delta_v2'].includes(
+            name,
+          ),
+        ),
+        summarize: jest.fn(() => 'Catalog v2 summary'),
         callTool: jest.fn(),
       }) as never,
       (overrides.permissionService ?? null) as never,
@@ -207,6 +232,8 @@ describe('McpToolService', () => {
       'move_pages',
       'resolve_catalog_bundle',
       'resolve_catalog_delta',
+      'resolve_catalog_bundle_v2',
+      'resolve_catalog_delta_v2',
       'list_page_versions',
       'get_page_version',
       'diff_page_versions',

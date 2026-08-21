@@ -345,6 +345,37 @@ export class EnvironmentService {
     return this.configService.get<string>('MCP_METRICS_TOKEN');
   }
 
+  getMcpCatalogSigningSecret(): string {
+    return (
+      this.configService.get<string>('MCP_CATALOG_SIGNING_SECRET') ||
+      this.getAppSecret()
+    );
+  }
+
+  getMcpCatalogSigningKeyId(): string | undefined {
+    const value = this.configService
+      .get<string>('MCP_CATALOG_SIGNING_KEY_ID')
+      ?.trim();
+    return value || undefined;
+  }
+
+  getMcpCatalogPreviousPublicKeys(): string | undefined {
+    const value = this.configService
+      .get<string>('MCP_CATALOG_PREVIOUS_PUBLIC_KEYS')
+      ?.trim();
+    return value || undefined;
+  }
+
+  getMcpCatalogChallengeTtlSeconds(): number {
+    return parseInt(
+      this.configService.get<string>(
+        'MCP_CATALOG_CHALLENGE_TTL_SECONDS',
+        '86400',
+      ),
+      10,
+    );
+  }
+
   isVectorSearchEnabled(): boolean {
     return (
       this.configService

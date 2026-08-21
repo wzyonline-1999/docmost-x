@@ -13,7 +13,10 @@ import {
   validateSync,
 } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
+import { createPublicKey } from 'crypto';
 import { IsISO6391 } from '../../common/validators/is-iso6391';
+
+const CATALOG_SIGNING_KEY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 function IsNumericStringInRange(
   min: number,
@@ -203,6 +206,24 @@ export class EnvironmentVariables {
   @MinLength(32)
   @IsString()
   MCP_METRICS_TOKEN: string;
+
+  @IsOptional()
+  @MinLength(32)
+  @IsString()
+  MCP_CATALOG_SIGNING_SECRET: string;
+
+  @IsOptional()
+  @IsString()
+  MCP_CATALOG_SIGNING_KEY_ID: string;
+
+  @IsOptional()
+  @IsString()
+  MCP_CATALOG_PREVIOUS_PUBLIC_KEYS: string;
+
+  @IsOptional()
+  @IsNumberString()
+  @IsNumericStringInRange(60, 2_592_000)
+  MCP_CATALOG_CHALLENGE_TTL_SECONDS: string;
 
   @IsOptional()
   @IsIn(['true', 'false'])
@@ -415,7 +436,64 @@ function inspectEnvironment(config: Record<string, any>) {
     messages.push('At least one VECTOR_HYBRID_*_WEIGHT must be greater than 0');
   }
 
+  const catalogSigningKeyId = config.MCP_CATALOG_SIGNING_KEY_ID;
+  if (
+    typeof catalogSigningKeyId === 'string' &&
+    catalogSigningKeyId.length > 0 &&
+    !CATALOG_SIGNING_KEY_ID_PATTERN.test(catalogSigningKeyId)
+  ) {
+    messages.push(
+      'MCP_CATALOG_SIGNING_KEY_ID must contain only letters, digits, dot, underscore, colon, or hyphen',
+    );
+  }
+
+  const previousCatalogKeys = config.MCP_CATALOG_PREVIOUS_PUBLIC_KEYS;
+  if (
+    typeof previousCatalogKeys === 'string' &&
+    previousCatalogKeys.trim().length > 0 &&
+    !isValidCatalogPublicKeyMap(previousCatalogKeys)
+  ) {
+    messages.push(
+      'MCP_CATALOG_PREVIOUS_PUBLIC_KEYS must be a JSON object of valid key IDs to canonical Ed25519 SPKI DER base64url public keys',
+    );
+  }
+
   return { validatedConfig, messages };
+}
+
+function isValidCatalogPublicKeyMap(source: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return false;
+  }
+  for (const [keyId, encoded] of Object.entries(parsed)) {
+    if (
+      !CATALOG_SIGNING_KEY_ID_PATTERN.test(keyId) ||
+      typeof encoded !== 'string' ||
+      encoded.length === 0
+    ) {
+      return false;
+    }
+    try {
+      const decoded = Buffer.from(encoded, 'base64url');
+      if (
+        decoded.length === 0 ||
+        decoded.toString('base64url') !== encoded ||
+        createPublicKey({ key: decoded, format: 'der', type: 'spki' })
+          .asymmetricKeyType !== 'ed25519'
+      ) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function getEnvironmentValidationMessages(

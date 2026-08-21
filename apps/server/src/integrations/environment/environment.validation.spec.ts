@@ -1,4 +1,5 @@
 import { getEnvironmentValidationMessages } from './environment.validation';
+import { generateKeyPairSync } from 'crypto';
 
 const baseEnvironment = {
   DATABASE_URL: 'postgresql://docmost:password@127.0.0.1:5432/docmost',
@@ -41,6 +42,42 @@ describe('environment validation', () => {
         MCP_RATE_LIMIT_MAX_REQUESTS: '0',
       }),
     ).toEqual([]);
+  });
+
+  it('accepts a valid Catalog signing-key rotation configuration', () => {
+    const { publicKey } = generateKeyPairSync('ed25519');
+    const encoded = publicKey
+      .export({ format: 'der', type: 'spki' })
+      .toString('base64url');
+
+    expect(
+      getEnvironmentValidationMessages({
+        ...baseEnvironment,
+        MCP_CATALOG_SIGNING_SECRET:
+          'dedicated-catalog-signing-secret-at-least-32-bytes',
+        MCP_CATALOG_SIGNING_KEY_ID: 'catalog-ed25519-2026-08',
+        MCP_CATALOG_PREVIOUS_PUBLIC_KEYS: JSON.stringify({
+          'catalog-ed25519-2026-07': encoded,
+        }),
+        MCP_CATALOG_CHALLENGE_TTL_SECONDS: '86400',
+      }),
+    ).toEqual([]);
+  });
+
+  it.each([
+    ['MCP_CATALOG_SIGNING_SECRET', 'too-short'],
+    ['MCP_CATALOG_CHALLENGE_TTL_SECONDS', '59'],
+    ['MCP_CATALOG_CHALLENGE_TTL_SECONDS', '2592001'],
+    ['MCP_CATALOG_SIGNING_KEY_ID', 'invalid key id'],
+    ['MCP_CATALOG_PREVIOUS_PUBLIC_KEYS', '{not-json'],
+    ['MCP_CATALOG_PREVIOUS_PUBLIC_KEYS', '{"old-key":"not-a-key"}'],
+  ])('rejects invalid Catalog setting %s=%s', (name, value) => {
+    const messages = getEnvironmentValidationMessages({
+      ...baseEnvironment,
+      [name]: value,
+    });
+
+    expect(messages.some((message) => message.includes(name))).toBe(true);
   });
 
   it.each([

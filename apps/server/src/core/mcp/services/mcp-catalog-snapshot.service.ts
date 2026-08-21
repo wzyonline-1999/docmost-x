@@ -18,6 +18,7 @@ type CatalogSubtreeRow = {
   workspaceId: string;
   updatedAt: Date;
   contentBytes: number | string | bigint;
+  depth: number | string | bigint;
 };
 
 @Injectable()
@@ -33,6 +34,13 @@ export class McpCatalogSnapshotService {
       .setIsolationLevel('repeatable read')
       .setAccessMode('read only')
       .execute(async (trx) => {
+        await sql`
+          SELECT set_config(
+            'statement_timeout',
+            ${String(CATALOG_LIMITS.maxExecutionMs)},
+            true
+          )
+        `.execute(trx);
         const snapshotClock = await sql<{ snapshotAt: Date }>`
         SELECT transaction_timestamp() AS "snapshotAt"
       `.execute(trx);
@@ -126,6 +134,7 @@ export class McpCatalogSnapshotService {
                   'contentBytes',
                 ),
                 sql<string[]>`ARRAY[pages.id]`.as('path'),
+                sql<number>`0`.as('depth'),
               ])
               .where('pages.id', '=', root.id)
               .where('pages.deletedAt', 'is', null)
@@ -148,8 +157,14 @@ export class McpCatalogSnapshotService {
                       'contentBytes',
                     ),
                     sql<string[]>`parent.path || child.id`.as('path'),
+                    sql<number>`parent.depth + 1`.as('depth'),
                   ])
                   .where('child.deletedAt', 'is', null)
+                  .where(
+                    'parent.depth',
+                    '<',
+                    CATALOG_LIMITS.maxTraversalDepth + 1,
+                  )
                   .where(sql<SqlBool>`NOT child.id = ANY(parent.path)`),
               ),
           )
@@ -162,10 +177,21 @@ export class McpCatalogSnapshotService {
             'workspaceId',
             'updatedAt',
             'contentBytes',
+            'depth',
           ])
           .orderBy('id', 'asc')
           .limit(CATALOG_LIMITS.maxScannedPages + 1)
           .execute()) as CatalogSubtreeRow[];
+
+        if (
+          subtree.some(
+            (page) => Number(page.depth) > CATALOG_LIMITS.maxTraversalDepth,
+          )
+        ) {
+          throw new PayloadTooLargeException(
+            `Catalog snapshot supports at most ${CATALOG_LIMITS.maxTraversalDepth} levels`,
+          );
+        }
 
         if (subtree.length > CATALOG_LIMITS.maxScannedPages) {
           throw new PayloadTooLargeException(

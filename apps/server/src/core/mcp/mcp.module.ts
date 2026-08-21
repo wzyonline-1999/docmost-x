@@ -33,6 +33,9 @@ import { McpPageMoveService } from './services/mcp-page-move.service';
 import { CatalogContractRegistry } from './services/catalog-contract.registry';
 import { McpCatalogBundleService } from './services/mcp-catalog-bundle.service';
 import { McpCatalogSnapshotService } from './services/mcp-catalog-snapshot.service';
+import { CatalogV2ContractRegistry } from './services/catalog-v2-contract.registry';
+import { McpCatalogProofService } from './services/mcp-catalog-proof.service';
+import { McpCatalogV2Service } from './services/mcp-catalog-v2.service';
 
 @Module({
   imports: [AttachmentModule, PageModule, StorageModule, TemplateModule],
@@ -44,10 +47,13 @@ import { McpCatalogSnapshotService } from './services/mcp-catalog-snapshot.servi
   ],
   providers: [
     CatalogContractRegistry,
+    CatalogV2ContractRegistry,
     McpAdminService,
     McpAttachmentService,
     McpCatalogBundleService,
+    McpCatalogProofService,
     McpCatalogSnapshotService,
+    McpCatalogV2Service,
     McpActorAccessService,
     McpAuditService,
     McpEffectivePermissionService,
@@ -72,10 +78,13 @@ import { McpCatalogSnapshotService } from './services/mcp-catalog-snapshot.servi
   ],
   exports: [
     CatalogContractRegistry,
+    CatalogV2ContractRegistry,
     McpAdminService,
     McpAttachmentService,
     McpCatalogBundleService,
+    McpCatalogProofService,
     McpCatalogSnapshotService,
+    McpCatalogV2Service,
     McpActorAccessService,
     McpAuditService,
     McpEffectivePermissionService,

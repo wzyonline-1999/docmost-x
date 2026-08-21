@@ -8,11 +8,13 @@ export const CATALOG_FRESHNESS_SCHEMA_VERSION = 'catalog-freshness-proof.v1';
 export const CATALOG_LIMITS = Object.freeze({
   maxRoots: 32,
   maxScannedPages: 2_000,
+  maxTraversalDepth: 64,
   maxClosurePages: 512,
   maxEdges: 4_096,
   maxPageMarkdownBytes: 1024 * 1024,
   maxScannedContentBytes: 32 * 1024 * 1024,
   maxResponseBytes: 8 * 1024 * 1024,
+  maxExecutionMs: 10_000,
   minChallengeBytes: 16,
   maxChallengeBytes: 128,
 });
