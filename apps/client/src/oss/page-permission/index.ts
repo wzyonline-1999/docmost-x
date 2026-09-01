@@ -1,3 +1,1 @@
-export function PageShareModal(_props: any) {
-  return null;
-}
+export { default as PageShareModal } from "@/features/share/components/share-modal";

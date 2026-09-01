@@ -10,7 +10,7 @@ import {
   TextInput,
 } from "@mantine/core";
 import { IconExternalLink, IconWorld, IconLock } from "@tabler/icons-react";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import {
   useCreateShareMutation,
   useDeleteShareMutation,
@@ -58,31 +58,23 @@ export default function ShareModal({ readOnly }: ShareModalProps) {
 
   const publicLink = `${getAppUrl()}/share/${share?.key}/p/${pageSlug}`;
 
-  const [isPagePublic, setIsPagePublic] = useState<boolean>(false);
-  useEffect(() => {
-    if (share) {
-      setIsPagePublic(true);
-    } else {
-      setIsPagePublic(false);
-    }
-  }, [share, pageId]);
+  const isPagePublic = Boolean(share);
 
   const handleChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const value = event.currentTarget.checked;
-    setIsPagePublic(value);
 
     try {
       if (value) {
         await createShareMutation.mutateAsync({
           pageId: pageId,
-          includeSubPages: true,
+          includeSubPages: false,
           searchIndexing: false,
         });
       } else if (share && share.id) {
         await deleteShareMutation.mutateAsync(share.id);
       }
     } catch {
-      setIsPagePublic(!value);
+      // The query-backed switch stays aligned with the last persisted state.
     }
   };
 
@@ -239,8 +231,13 @@ export default function ShareModal({ readOnly }: ShareModalProps) {
               </div>
               <Switch
                 onChange={handleChange}
-                defaultChecked={isPagePublic}
-                disabled={readOnly}
+                checked={isPagePublic}
+                disabled={
+                  readOnly ||
+                  !pageId ||
+                  createShareMutation.isPending ||
+                  deleteShareMutation.isPending
+                }
                 size="xs"
               />
             </Group>
